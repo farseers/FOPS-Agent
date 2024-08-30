@@ -2,7 +2,11 @@
 package main
 
 import (
+	"fops/application"
 	"github.com/farseer-go/webapi"
+	"github.com/farseer-go/webapi/context"
 )
 
-var route = []webapi.Route{}
+var route = []webapi.Route{
+	{"GET", "/api/host/resource", application.Resource, "", []context.IFilter{}, []string{}},
+}
