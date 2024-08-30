@@ -26,7 +26,6 @@ jobs:
           - go work edit -replace github.com/farseer-go/fs=../farseer-go/fs
           - go work edit -replace github.com/farseer-go/docker=../farseer-go/docker
           - go work edit -replace github.com/farseer-go/mapper=../farseer-go/mapper
-          - go work edit -replace github.com/farseer-go/queue=../farseer-go/queue
           - go work edit -replace github.com/farseer-go/utils=../farseer-go/utils
           - go work edit -replace github.com/farseer-go/collections=../farseer-go/collections
           - go work edit -replace github.com/farseer-go/webapi=../farseer-go/webapi
