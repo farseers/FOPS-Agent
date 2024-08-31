@@ -16,6 +16,6 @@ func HostResource() system.Resource {
 // 获取Docker资源使用情况
 // @get /docker/resource
 func DockerResource() collections.List[docker.DockerStatsVO] {
-	client, _ := docker.NewClient()
+	client := docker.NewClient()
 	return client.Stats()
 }
