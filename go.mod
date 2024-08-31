@@ -13,6 +13,7 @@ require (
 	github.com/farseer-go/fs v0.14.0
 	github.com/farseer-go/utils v0.14.0
 	github.com/farseer-go/webapi v0.14.0
+	github.com/farseer-go/docker v0.14.0
 )
 
 require (

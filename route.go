@@ -8,5 +8,6 @@ import (
 )
 
 var route = []webapi.Route{
-	{"GET", "/api/host/resource", application.Resource, "", []context.IFilter{}, []string{}},
+	{"GET", "/api/host/resource", application.HostResource, "", []context.IFilter{}, []string{}},
+	{"GET", "/api/docker/resource", application.DockerResource, "", []context.IFilter{}, []string{}},
 }
