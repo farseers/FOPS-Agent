@@ -7,19 +7,14 @@ import (
 	"github.com/farseer-go/utils/system"
 )
 
-var DefaultSystemResource system.Resource
-var DefaultDockerResource collections.List[docker.DockerStatsVO]
-
 // 获取宿主资源使用情况
 // @get /host/resource
 func HostResource() system.Resource {
-	//return system.GetResource()
-	return DefaultSystemResource
+	return system.GetResource()
 }
 
 // 获取Docker资源使用情况
 // @get /docker/resource
 func DockerResource() collections.List[docker.DockerStatsVO] {
-	//return docker.NewClient().Stats()
-	return DefaultDockerResource
+	return docker.NewClient().Stats()
 }

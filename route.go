@@ -10,4 +10,6 @@ import (
 var route = []webapi.Route{
 	{"GET", "/api/host/resource", application.HostResource, "", []context.IFilter{}, []string{}},
 	{"GET", "/api/docker/resource", application.DockerResource, "", []context.IFilter{}, []string{}},
+	{"WS", "/ws/host/resource", application.WsHostResource, "", []context.IFilter{}, []string{"context"}},
+	{"WS", "/ws/docker/resource", application.WsDockerResource, "", []context.IFilter{}, []string{"context"}},
 }
