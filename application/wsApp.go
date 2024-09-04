@@ -3,7 +3,6 @@ package application
 
 import (
 	"github.com/farseer-go/docker"
-	"github.com/farseer-go/fs/flog"
 	"github.com/farseer-go/utils/system"
 	"github.com/farseer-go/webapi/websocket"
 	"time"
@@ -19,7 +18,6 @@ func WsHostResource(context *websocket.Context[Request]) {
 	for {
 		resource := system.GetResource()
 		if resource.CpuUsagePercent > 0 {
-			flog.Infof("%f,%f,%d", resource.CpuUsagePercent, resource.MemoryUsagePercent, resource.MemoryUsage)
 			_ = context.Send(resource)
 		}
 		time.Sleep(3 * time.Second)
