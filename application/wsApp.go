@@ -3,7 +3,6 @@ package application
 
 import (
 	"github.com/farseer-go/docker"
-	"github.com/farseer-go/fs/flog"
 	"github.com/farseer-go/utils/system"
 	"github.com/farseer-go/webapi/websocket"
 	"time"
@@ -31,7 +30,6 @@ func WsDockerResource(context *websocket.Context[Request]) {
 	for {
 		stats := docker.NewClient().Stats()
 		if stats.Count() > 0 {
-			flog.Infof("%+v", stats)
 			_ = context.Send(stats)
 		}
 		time.Sleep(3 * time.Second)
