@@ -20,8 +20,6 @@ type Res struct {
 	Dockers             collections.List[docker.DockerStatsVO] // Docker容器资源
 }
 
-var hostIP string
-
 func main() {
 	fs.Initialize[StartupModule]("fops-agent")
 	wsServer := configure.GetString("Fops.WsServer")
@@ -32,7 +30,8 @@ func main() {
 	dockerClient := docker.NewClient()
 	dockerVer := dockerClient.GetVersion()
 	isMaster := dockerClient.IsMaster()
-	hostIP = dockerClient.GetHostIP()
+	hostIP := dockerClient.GetHostIP()
+	hostName := dockerClient.GetHostName()
 
 	if dockerVer == "" {
 		dockerVer = "未安装"
@@ -59,6 +58,9 @@ func main() {
 			// 如果是Docker节点，获取主机IP
 			if hostIP != "" {
 				res.Host.IP = hostIP
+			}
+			if hostName != "" {
+				res.Host.HostName = hostName
 			}
 
 			err = wsClient.Send(res)
