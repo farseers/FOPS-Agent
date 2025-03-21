@@ -30,11 +30,14 @@ func main() {
 	dockerClient := docker.NewClient()
 	dockerVer := dockerClient.GetVersion()
 	isMaster := dockerClient.IsMaster()
-	hostIP := dockerClient.GetHostIP()
-	hostName := dockerClient.GetHostName()
+	var hostIP string
+	var hostName string
 
 	if dockerVer == "" {
 		dockerVer = "未安装"
+	} else {
+		hostIP = dockerClient.GetHostIP()
+		hostName = dockerClient.GetHostName()
 	}
 
 	wsServer += "/ws/resource"
