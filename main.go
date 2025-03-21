@@ -14,8 +14,10 @@ import (
 )
 
 type Res struct {
-	Host    system.Resource
-	Dockers collections.List[docker.DockerStatsVO]
+	Host                system.Resource                        // 主机资源
+	IsDockerMaster      bool                                   // 是否是Docker主节点
+	DockerEngineVersion string                                 // Docker引擎版本
+	Dockers             collections.List[docker.DockerStatsVO] // Docker容器资源
 }
 
 func main() {
@@ -25,6 +27,12 @@ func main() {
 		panic("请配置Fops.WsServer")
 	}
 
+	client := docker.NewClient()
+	dockerVer := client.GetVersion()
+	isMaster := client.IsMaster()
+	if dockerVer == "" {
+		dockerVer = "未安装"
+	}
 	wsServer += "/ws/resource"
 	for {
 		wsClient, err := ws.Connect(wsServer, 8192)
@@ -37,10 +45,13 @@ func main() {
 
 		for {
 			// 发送消息
-			err = wsClient.Send(Res{
-				Host:    system.GetResource(),
-				Dockers: docker.NewClient().Stats(),
-			})
+			res := Res{
+				IsDockerMaster:      isMaster,
+				DockerEngineVersion: dockerVer,
+				Host:                system.GetResource(),
+				Dockers:             docker.NewClient().Stats(),
+			}
+			err = wsClient.Send(res)
 			if err != nil {
 				flog.Warningf("[%s]发送消息失败：%s", core.AppName, err.Error())
 				break
