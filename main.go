@@ -1,7 +1,6 @@
 package main
 
 import (
-	"net"
 	"time"
 
 	"github.com/farseer-go/collections"
@@ -30,13 +29,13 @@ func main() {
 		panic("请配置Fops.WsServer")
 	}
 
-	client := docker.NewClient()
-	dockerVer := client.GetVersion()
-	isMaster := client.IsMaster()
+	dockerClient := docker.NewClient()
+	dockerVer := dockerClient.GetVersion()
+	isMaster := dockerClient.IsMaster()
+	hostIP = dockerClient.GetHostIP()
+
 	if dockerVer == "" {
 		dockerVer = "未安装"
-	} else {
-		hostIP = getHostIP()
 	}
 
 	wsServer += "/ws/resource"
@@ -55,7 +54,7 @@ func main() {
 				IsDockerMaster:      isMaster,
 				DockerEngineVersion: dockerVer,
 				Host:                system.GetResource(),
-				Dockers:             docker.NewClient().Stats(),
+				Dockers:             dockerClient.Stats(),
 			}
 			// 如果是Docker节点，获取主机IP
 			if hostIP != "" {
@@ -72,12 +71,4 @@ func main() {
 		// 断开后重连
 		time.Sleep(3 * time.Second)
 	}
-}
-
-func getHostIP() string {
-	addrs, err := net.LookupHost("host.docker.internal")
-	if err != nil || len(addrs) == 0 {
-		return ""
-	}
-	return addrs[0]
 }
