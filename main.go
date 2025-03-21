@@ -1,6 +1,7 @@
 package main
 
 import (
+	"net"
 	"time"
 
 	"github.com/farseer-go/collections"
@@ -20,6 +21,8 @@ type Res struct {
 	Dockers             collections.List[docker.DockerStatsVO] // Docker容器资源
 }
 
+var hostIP string
+
 func main() {
 	fs.Initialize[StartupModule]("fops-agent")
 	wsServer := configure.GetString("Fops.WsServer")
@@ -32,7 +35,10 @@ func main() {
 	isMaster := client.IsMaster()
 	if dockerVer == "" {
 		dockerVer = "未安装"
+	} else {
+		hostIP = getHostIP()
 	}
+
 	wsServer += "/ws/resource"
 	for {
 		wsClient, err := ws.Connect(wsServer, 8192)
@@ -51,6 +57,11 @@ func main() {
 				Host:                system.GetResource(),
 				Dockers:             docker.NewClient().Stats(),
 			}
+			// 如果是Docker节点，获取主机IP
+			if hostIP != "" {
+				res.Host.IP = hostIP
+			}
+
 			err = wsClient.Send(res)
 			if err != nil {
 				flog.Warningf("[%s]发送消息失败：%s", core.AppName, err.Error())
@@ -61,4 +72,12 @@ func main() {
 		// 断开后重连
 		time.Sleep(3 * time.Second)
 	}
+}
+
+func getHostIP() string {
+	addrs, err := net.LookupHost("host.docker.internal")
+	if err != nil || len(addrs) == 0 {
+		return ""
+	}
+	return addrs[0]
 }
