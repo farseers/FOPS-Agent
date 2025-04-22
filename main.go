@@ -67,7 +67,6 @@ func main() {
 				res.Host.HostName = hostName
 			}
 
-			flog.Infof("%+v", res.Host.Disk)
 			err = wsClient.Send(res)
 			if err != nil {
 				flog.Warningf("[%s]发送消息失败：%s", core.AppName, err.Error())
