@@ -56,7 +56,7 @@ func main() {
 			res := Res{
 				IsDockerMaster:      isMaster,
 				DockerEngineVersion: dockerVer,
-				Host:                system.GetResource(),
+				Host:                system.GetResource("/", "/home"),
 				Dockers:             dockerClient.Stats(),
 			}
 			// 如果是Docker节点，获取主机IP
