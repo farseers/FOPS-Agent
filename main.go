@@ -36,6 +36,7 @@ func main() {
 	if dockerVer == "" {
 		dockerVer = "未安装"
 	} else {
+		// 获取docker的IP、docker主机名
 		hostIP = dockerClient.GetHostIP()
 		hostName = dockerClient.GetHostName()
 	}
