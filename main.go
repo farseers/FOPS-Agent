@@ -67,6 +67,12 @@ func main() {
 				res.Host.HostName = hostName
 			}
 
+			// 如果硬盘数量为2，且容量完全一致时，则只需要取一个就可以。说明他们是同一个硬盘
+			if len(res.Host.Disk) == 2 {
+				if res.Host.Disk[0].DiskTotal == res.Host.Disk[1].DiskTotal && res.Host.Disk[0].DiskAvailable == res.Host.Disk[1].DiskAvailable && res.Host.Disk[0].DiskUsage == res.Host.Disk[1].DiskUsage {
+					res.Host.Disk = res.Host.Disk[:1]
+				}
+			}
 			err = wsClient.Send(res)
 			if err != nil {
 				flog.Warningf("[%s]发送消息失败：%s", core.AppName, err.Error())
