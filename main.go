@@ -1,24 +1,10 @@
 package main
 
 import (
-	"time"
-
-	"github.com/farseer-go/collections"
 	"github.com/farseer-go/docker"
 	"github.com/farseer-go/fs"
 	"github.com/farseer-go/fs/configure"
-	"github.com/farseer-go/fs/core"
-	"github.com/farseer-go/fs/flog"
-	"github.com/farseer-go/utils/system"
-	"github.com/farseer-go/utils/ws"
 )
-
-type Res struct {
-	Host                system.Resource                        // 主机资源
-	IsDockerMaster      bool                                   // 是否是Docker主节点
-	DockerEngineVersion string                                 // Docker引擎版本
-	Dockers             collections.List[docker.DockerStatsVO] // Docker容器资源
-}
 
 func main() {
 	fs.Initialize[StartupModule]("fops-agent")
@@ -28,59 +14,18 @@ func main() {
 	}
 
 	dockerClient := docker.NewClient()
-	dockerVer := dockerClient.GetVersion()
-	isMaster := dockerClient.IsMaster()
-	var hostIP string
-	var hostName string
+	dockerInfo := dockerClient.GetInfo() // 获取docker版本
 
-	if dockerVer == "" {
-		dockerVer = "未安装"
-	} else {
-		// 获取docker的IP、docker主机名
-		hostIP = dockerClient.GetHostIP()
-		hostName = dockerClient.GetHostName()
-	}
+	// 持续上传系统资源
+	go getResource(wsServer, dockerInfo, dockerClient)
 
-	wsServer += "/ws/resource"
-	for {
-		wsClient, err := ws.Connect(wsServer, 8192)
-		wsClient.AutoExit = false
-		if err != nil {
-			flog.Warningf("[%s]Fops.WsServer连接失败：%s，将在3秒后重连", wsServer, err.Error())
-			time.Sleep(3 * time.Second)
-			continue
-		}
-
+	// 安装了docker，则获取docker事件
+	if dockerInfo.Version != "" {
+		// 这里用for是怕shell命令执行失败，导致无法持续获取docker事件
 		for {
-			// 发送消息
-			res := Res{
-				IsDockerMaster:      isMaster,
-				DockerEngineVersion: dockerVer,
-				Host:                system.GetResource("/", "/home"),
-				Dockers:             dockerClient.Stats(),
-			}
-			// 如果是Docker节点，获取主机IP
-			if hostIP != "" {
-				res.Host.IP = hostIP
-			}
-			if hostName != "" {
-				res.Host.HostName = hostName
-			}
-
-			// 如果硬盘数量为2，且容量完全一致时，则只需要取一个就可以。说明他们是同一个硬盘
-			if len(res.Host.Disk) == 2 {
-				if res.Host.Disk[0].DiskTotal == res.Host.Disk[1].DiskTotal && res.Host.Disk[0].DiskAvailable == res.Host.Disk[1].DiskAvailable && res.Host.Disk[0].DiskUsage == res.Host.Disk[1].DiskUsage {
-					res.Host.Disk = res.Host.Disk[:1]
-				}
-			}
-			err = wsClient.Send(res)
-			if err != nil {
-				flog.Warningf("[%s]发送消息失败：%s", core.AppName, err.Error())
-				break
-			}
-			time.Sleep(3 * time.Second)
+			WatchDockerEventJob(dockerClient)
 		}
-		// 断开后重连
-		time.Sleep(3 * time.Second)
 	}
+	select {}
+
 }
