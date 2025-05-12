@@ -29,6 +29,7 @@ jobs:
           - go work edit -replace github.com/farseer-go/collections=../farseer-go/collections
           - go work edit -replace github.com/farseer-go/webapi=../farseer-go/webapi
           - go work edit -replace github.com/farseer-go/tasks=../farseer-go/tasks
+          - go work edit -replace github.com/farseer-go/monitor=../farseer-go/monitor
           - go mod download
           - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./fops-agent -ldflags="-w -s" .
 
