@@ -11,7 +11,6 @@ require (
 	github.com/farseer-go/docker v0.17.0
 	github.com/farseer-go/fs v0.17.0
 	github.com/farseer-go/monitor v0.17.0
-	github.com/farseer-go/queue v0.17.0
 	github.com/farseer-go/utils v0.17.0
 )
 
