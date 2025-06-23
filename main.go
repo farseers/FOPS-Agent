@@ -19,7 +19,7 @@ func main() {
 	// 持续上传系统资源
 	go getResource(wsServer, dockerInfo, dockerClient)
 
-	// 安装了docker，则获取docker事件
+	// 监听docker事件
 	if dockerInfo.Version != "" {
 		// 这里用for是怕shell命令执行失败，导致无法持续获取docker事件
 		for {
