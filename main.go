@@ -22,7 +22,7 @@ func main() {
 	containers, _ := dockerClient.Container.List("", nil)
 	containers.Foreach(func(item *docker.Container) {
 		dockerStatsVO := dockerClient.Container.Stats(item.ID)
-		flog.Infof("容器: %s, CPU使用率: %.2f%%, 内存使用: %dMB", dockerStatsVO.ContainerName, dockerStatsVO.CpuUsagePercent, dockerStatsVO.MemoryUsage/1024/1024)
+		flog.Infof("容器: %s, CPU使用率: %.2f%%, 内存使用: %dMB", dockerStatsVO.ContainerName, dockerStatsVO.CpuUsagePercent, dockerStatsVO.MemoryUsage)
 	})
 
 	// 持续上传系统资源
