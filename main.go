@@ -19,13 +19,25 @@ func main() {
 	// 持续上传系统资源
 	go getResource(wsServer, dockerInfo, dockerClient)
 
-	// 监听docker事件
 	if dockerInfo.Version != "" {
-		// 这里用for是怕shell命令执行失败，导致无法持续获取docker事件
-		for {
-			WatchDockerEventJob(dockerClient)
-		}
-	}
-	select {}
+		// 监听docker事件
+		go func() {
+			// 这里用for是怕shell命令执行失败，导致无法持续获取docker事件
+			for {
+				WatchDockerEventJob(dockerClient)
+			}
+		}()
 
+		// 监听docker容器日志
+		// go func() {
+		// 	WatchFLogsJob(dockerClient)
+		// }()
+
+		// // 监听docker容器日志
+		// go func() {
+		// 	WatchLinkTraceJob(dockerClient)
+		// }()
+	}
+
+	fs.Run()
 }

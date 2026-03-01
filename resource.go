@@ -42,7 +42,7 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 				Host:                system.GetResource("/", "/home"),
 				Dockers:             dockerClient.Stats(),
 			}
-			// 如果是Docker节点，获取主机IP
+			// 如果是Docker节点，则使用Docker节点的IP和主机名，否则使用主机的IP和主机名
 			if dockerInfo.NodeAddr != "" {
 				res.Host.IP = dockerInfo.NodeAddr
 			}

@@ -42,6 +42,6 @@ func WatchDockerEventJob(dockerClient *docker.Client) {
 		}
 
 		// 发送消息
-		monitor.SendValue(eventResult.Actor.Attributes.ComDockerSwarmServiceName, "event", eventResult.Actor.Attributes.Name+"，"+eventResult.Action)
+		monitor.SendValue(eventResult.Actor.Attributes.ComDockerSwarmServiceName, "event", eventResult.Actor.Attributes.Name+", "+eventResult.Action)
 	}
 }
