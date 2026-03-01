@@ -4,6 +4,7 @@ import (
 	"github.com/farseer-go/docker"
 	"github.com/farseer-go/fs"
 	"github.com/farseer-go/fs/configure"
+	"github.com/farseer-go/fs/flog"
 )
 
 func main() {
@@ -15,6 +16,14 @@ func main() {
 
 	dockerClient := docker.NewClient()
 	dockerInfo := dockerClient.GetInfo() // 获取docker版本
+
+	flog.Infof("当前容器版本: %s", dockerInfo.Version)
+
+	containers, _ := dockerClient.Container.List("", nil)
+	containers.Foreach(func(item *docker.Container) {
+		dockerStatsVO := dockerClient.Container.Stats(item.ID)
+		flog.Infof("容器: %s, CPU使用率: %.2f%%, 内存使用: %dMB", dockerStatsVO.ContainerName, dockerStatsVO.CpuUsagePercent, dockerStatsVO.MemoryUsage/1024/1024)
+	})
 
 	// 持续上传系统资源
 	go getResource(wsServer, dockerInfo, dockerClient)
