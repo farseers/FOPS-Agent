@@ -17,7 +17,7 @@ func main() {
 	dockerClient := docker.NewClient()
 	dockerInfo := dockerClient.GetInfo() // 获取docker版本
 
-	flog.Infof("当前容器版本: %s", dockerInfo.Version)
+	flog.Infof("当前容器版本: %s", dockerInfo.ServerVersion)
 
 	containers, _ := dockerClient.Container.List("", nil)
 	containers.Parallel(func(item *docker.Container) {
@@ -28,7 +28,7 @@ func main() {
 	// 持续上传系统资源
 	go getResource(wsServer, dockerInfo, dockerClient)
 
-	if dockerInfo.Version != "" {
+	if dockerInfo.ServerVersion != "" {
 		// 监听docker事件
 		go func() {
 			// 这里用for是怕shell命令执行失败，导致无法持续获取docker事件

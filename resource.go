@@ -21,15 +21,15 @@ type Res struct {
 func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *docker.Client) {
 	wsServer += "/ws/resource"
 
-	if dockerInfo.Version == "" {
-		dockerInfo.Version = "未安装"
+	if dockerInfo.ServerVersion == "" {
+		dockerInfo.ServerVersion = "未安装"
 	}
 
 	for {
 		wsClient, err := ws.Connect(wsServer, 8192)
 		wsClient.AutoExit = false
 		if err != nil {
-			flog.Warningf("[%s]Fops.WsServer连接失败：%s，将在3秒后重连", wsServer, err.Error())
+			flog.Warningf("[%s]Fops.WsServer连接失败: %s, 将在3秒后重连", wsServer, err.Error())
 			time.Sleep(3 * time.Second)
 			continue
 		}
@@ -37,17 +37,17 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 		for {
 			// 发送消息
 			res := Res{
-				IsDockerMaster:      dockerInfo.IsMaster,
-				DockerEngineVersion: dockerInfo.Version,
+				IsDockerMaster:      dockerInfo.Swarm.ControlAvailable,
+				DockerEngineVersion: dockerInfo.ServerVersion,
 				Host:                system.GetResource("/", "/home"),
 				Dockers:             dockerClient.Stats(),
 			}
 			// 如果是Docker节点，则使用Docker节点的IP和主机名，否则使用主机的IP和主机名
-			if dockerInfo.NodeAddr != "" {
-				res.Host.IP = dockerInfo.NodeAddr
+			if dockerInfo.Swarm.NodeAddr != "" {
+				res.Host.IP = dockerInfo.Swarm.NodeAddr
 			}
-			if dockerInfo.HostName != "" {
-				res.Host.HostName = dockerInfo.HostName
+			if dockerInfo.Name != "" {
+				res.Host.HostName = dockerInfo.Name
 			}
 
 			// 如果硬盘数量为2，且容量完全一致时，则只需要取一个就可以。说明他们是同一个硬盘
