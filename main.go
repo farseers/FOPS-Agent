@@ -20,7 +20,7 @@ func main() {
 	flog.Infof("当前容器版本: %s", dockerInfo.Version)
 
 	containers, _ := dockerClient.Container.List("", nil)
-	containers.Foreach(func(item *docker.Container) {
+	containers.Parallel(func(item *docker.Container) {
 		dockerStatsVO := dockerClient.Container.Stats(item.ID)
 		flog.Infof("容器: %s, CPU使用率: %.2f%%, 内存使用: %dMB", dockerStatsVO.ContainerName, dockerStatsVO.CpuUsagePercent, dockerStatsVO.MemoryUsage)
 	})
