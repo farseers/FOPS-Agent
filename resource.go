@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"time"
 
 	"github.com/farseer-go/collections"
@@ -50,6 +51,11 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 			// 判断当前是节点角色
 			if dockerInfo.Swarm.ControlAvailable {
 				res.Role = "Manager"
+			}
+
+			// 可用性首字母大写
+			if len(res.Availability) > 0 {
+				res.Availability = strings.ToUpper(string(res.Availability[0])) + res.Availability[1:]
 			}
 
 			// 标签
