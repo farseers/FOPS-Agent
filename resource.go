@@ -16,6 +16,9 @@ type Res struct {
 	IsDockerMaster      bool                                   // 是否是Docker主节点
 	DockerEngineVersion string                                 // Docker引擎版本
 	Dockers             collections.List[docker.DockerStatsVO] // Docker容器资源
+	Availability        string                                 // Docker节点状态
+	Label               collections.List[docker.DockerLabelVO] // Docker节点标签
+	Role                string                                 // 节点角色   manager worker
 }
 
 func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *docker.Client) {
@@ -41,7 +44,23 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 				DockerEngineVersion: dockerInfo.ServerVersion,
 				Host:                system.GetResource("/", "/home"),
 				Dockers:             dockerClient.Stats(),
+				Availability:        dockerInfo.Swarm.LocalNodeState,
+				Role:                "Worker",
 			}
+			// 判断当前是节点角色
+			if dockerInfo.Swarm.ControlAvailable {
+				res.Role = "Manager"
+			}
+
+			// 标签
+			res.Label = collections.NewList[docker.DockerLabelVO]()
+			for k, v := range dockerInfo.Labels {
+				res.Label.Add(docker.DockerLabelVO{
+					Name:  k,
+					Value: v,
+				})
+			}
+
 			// 如果是Docker节点，则使用Docker节点的IP和主机名，否则使用主机的IP和主机名
 			if dockerInfo.Swarm.NodeAddr != "" {
 				res.Host.IP = dockerInfo.Swarm.NodeAddr
