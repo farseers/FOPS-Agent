@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -41,28 +40,13 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 		}
 
 		for {
-			sw := stopwatch.StartNew()
-			defer func() {
-				sw.Stop()
-				fmt.Printf("获取资源共耗时: %s\n", sw.GetMillisecondsText())
-			}()
-
-			sw1 := stopwatch.StartNew()
-			resource := system.GetResource("/", "/home")
-			sw1.Stop()
-			fmt.Printf("获取GetResource资源信息耗时: %s\n", sw1.GetMillisecondsText())
-
 			sw2 := stopwatch.StartNew()
-			dockers := dockerClient.Stats()
-			sw2.Stop()
-			fmt.Printf("获取Docker资源信息耗时: %s\n", sw2.GetMillisecondsText())
-
 			// 发送消息
 			res := Res{
 				IsDockerMaster:      dockerInfo.Swarm.ControlAvailable,
 				DockerEngineVersion: dockerInfo.ServerVersion,
-				Host:                resource,
-				Dockers:             dockers,
+				Host:                system.GetResource("/", "/home"),
+				Dockers:             dockerClient.Stats(),
 				Availability:        dockerInfo.Swarm.LocalNodeState,
 				Role:                "Worker",
 			}
@@ -104,7 +88,8 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 				flog.Warningf("[%s]发送消息失败：%s", core.AppName, err.Error())
 				break
 			}
-			time.Sleep(3 * time.Second)
+
+			time.Sleep((3 * time.Second) - sw2.ElapsedDuration())
 		}
 		// 断开后重连
 		time.Sleep(3 * time.Second)
