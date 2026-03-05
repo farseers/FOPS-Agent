@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/farseer-go/docker"
 	"github.com/farseer-go/fs/core"
 	"github.com/farseer-go/fs/flog"
+	"github.com/farseer-go/fs/stopwatch"
 	"github.com/farseer-go/utils/system"
 	"github.com/farseer-go/utils/ws"
 )
@@ -39,12 +41,28 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 		}
 
 		for {
+			sw := stopwatch.StartNew()
+			defer func() {
+				sw.Stop()
+				fmt.Printf("获取资源共耗时: %s\n", sw.GetMillisecondsText())
+			}()
+
+			sw1 := stopwatch.StartNew()
+			resource := system.GetResource("/", "/home")
+			sw1.Stop()
+			fmt.Printf("获取GetResource资源信息耗时: %s\n", sw1.GetMillisecondsText())
+
+			sw2 := stopwatch.StartNew()
+			dockers := dockerClient.Stats()
+			sw2.Stop()
+			fmt.Printf("获取Docker资源信息耗时: %s\n", sw2.GetMillisecondsText())
+
 			// 发送消息
 			res := Res{
 				IsDockerMaster:      dockerInfo.Swarm.ControlAvailable,
 				DockerEngineVersion: dockerInfo.ServerVersion,
-				Host:                system.GetResource("/", "/home"),
-				Dockers:             dockerClient.Stats(),
+				Host:                resource,
+				Dockers:             dockers,
 				Availability:        dockerInfo.Swarm.LocalNodeState,
 				Role:                "Worker",
 			}
