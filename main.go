@@ -20,7 +20,7 @@ func main() {
 	flog.Infof("当前容器版本: %s", dockerInfo.ServerVersion)
 
 	containers, _ := dockerClient.Container.List("", nil)
-	containers.Parallel(func(item *docker.Container) {
+	containers.Parallel(10, func(item *docker.Container) {
 		dockerStatsVO := dockerClient.Container.Stats(item.ID)
 		flog.Infof("容器: %s, CPU使用率: %.2f%%, 内存使用: %dMB", dockerStatsVO.ContainerName, dockerStatsVO.CpuUsagePercent, dockerStatsVO.MemoryUsage)
 	})
@@ -29,6 +29,9 @@ func main() {
 	go getResource(wsServer, dockerInfo, dockerClient)
 
 	if dockerInfo.ServerVersion != "" {
+		// 采集日志
+		CollectLog(wsServer)
+
 		// 监听docker事件
 		go func() {
 			// 这里用for是怕shell命令执行失败，导致无法持续获取docker事件
