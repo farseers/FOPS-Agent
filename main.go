@@ -29,10 +29,11 @@ func main() {
 	go getResource(wsServer, dockerInfo, dockerClient)
 
 	if dockerInfo.ServerVersion != "" {
+		ignoreNames := configure.GetStrings("Container.IgnoreName")
 		// 采集日志
-		CollectLog(wsServer)
+		CollectLog(wsServer, ignoreNames)
 		// 采集链路数据
-		CollectLinkTrace(wsServer)
+		CollectLinkTrace(wsServer, ignoreNames)
 
 		// 监听docker事件
 		go func() {

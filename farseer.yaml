@@ -1,2 +1,11 @@
 Fops:
   WsServer: "ws://127.0.0.1:8889"
+Container:
+  IgnoreName: 
+    - "portainer-agent"
+    - "portainer-ce"
+    - "lbui-admin"
+    - "lbui-user"
+    - "registry"
+    - "traefik"
+    - "vip8"

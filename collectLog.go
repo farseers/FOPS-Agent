@@ -20,7 +20,7 @@ type UploadRequest struct {
 }
 
 // 采集日志
-func CollectLog(wsServer string) {
+func CollectLog(wsServer string, ignoreNames []string) {
 	var url string
 	if strings.HasPrefix(wsServer, "wss://") {
 		url = "https://" + wsServer[6:] + "/flog/upload"
@@ -39,7 +39,7 @@ func CollectLog(wsServer string) {
 	}
 
 	// 采集容器日志并上传到fops
-	logCollector := collector.NewCollector("/var/log/flog/", "log", 5*time.Second, 10)
+	logCollector := collector.NewCollector("/var/log/flog/", "log", 5*time.Second, 10, ignoreNames)
 	logCollector.OnLogFile(func(logFile *collector.CollectFile) error {
 		lstData := collections.NewList[flog.LogData]()
 		logFile.Lines.Foreach(func(line *[]byte) {

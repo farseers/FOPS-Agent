@@ -20,7 +20,7 @@ type UploadTraceRequest struct {
 }
 
 // 采集链路追踪
-func CollectLinkTrace(wsServer string) {
+func CollectLinkTrace(wsServer string, ignoreNames []string) {
 	var url string
 	if strings.HasPrefix(wsServer, "wss://") {
 		url = "https://" + wsServer[6:] + "/linkTrace/upload"
@@ -39,7 +39,7 @@ func CollectLinkTrace(wsServer string) {
 	}
 
 	// 采集容器日志并上传到fops
-	logCollector := collector.NewCollector("/var/log/linkTrace/", "trace", 5*time.Second, 10)
+	logCollector := collector.NewCollector("/var/log/linkTrace/", "trace", 5*time.Second, 10, ignoreNames)
 	logCollector.OnLogFile(func(logFile *collector.CollectFile) error {
 		lstData := collections.NewList[trace.TraceContext]()
 		logFile.Lines.Foreach(func(line *[]byte) {

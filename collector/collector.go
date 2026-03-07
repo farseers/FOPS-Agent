@@ -22,11 +22,12 @@ type CollectFile struct {
 
 // Collector 采集器
 type Collector struct {
-	client        *docker.Client // Docker客户端
-	interval      time.Duration  // 采集间隔
-	maxConcurrent int            // 最大并发数
-	filePath      string         // 采集的文件路径（相对于容器内）
-	fileExtension string         // 文件扩展名
+	client        *docker.Client           // Docker客户端
+	interval      time.Duration            // 采集间隔
+	maxConcurrent int                      // 最大并发数
+	filePath      string                   // 采集的文件路径（相对于容器内）
+	fileExtension string                   // 文件扩展名
+	ignoreNames   collections.List[string] // 忽略的容器名称
 
 	// 事件回调
 	onLogFile func(logFile *CollectFile) error
@@ -38,7 +39,7 @@ type Collector struct {
 }
 
 // NewCollector 创建采集器
-func NewCollector(filePath string, fileExtension string, interval time.Duration, maxConcurrent int) *Collector {
+func NewCollector(filePath string, fileExtension string, interval time.Duration, maxConcurrent int, ignoreNames []string) *Collector {
 	client := docker.NewClient()
 	return &Collector{
 		client:        client,
@@ -46,6 +47,7 @@ func NewCollector(filePath string, fileExtension string, interval time.Duration,
 		maxConcurrent: maxConcurrent,
 		filePath:      filePath,
 		fileExtension: fileExtension,
+		ignoreNames:   collections.NewList(ignoreNames...),
 	}
 }
 
@@ -106,7 +108,10 @@ func (c *Collector) collect() {
 	}
 
 	containers.Parallel(c.maxConcurrent, func(cnt *docker.Container) {
-		c.collectContainer(cnt)
+		// 排除忽略的容器
+		if !c.ignoreNames.Contains(cnt.Name) {
+			c.collectContainer(cnt)
+		}
 	})
 }
 
