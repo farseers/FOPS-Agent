@@ -28,6 +28,7 @@ type Collector struct {
 	filePath      string                   // 采集的文件路径（相对于容器内）
 	fileExtension string                   // 文件扩展名
 	ignoreNames   collections.List[string] // 忽略的容器名称
+	store         *FileStore
 
 	// 事件回调
 	onLogFile func(logFile *CollectFile) error
@@ -40,14 +41,15 @@ type Collector struct {
 
 // NewCollector 创建采集器
 func NewCollector(filePath string, fileExtension string, interval time.Duration, maxConcurrent int, ignoreNames []string) *Collector {
-	client := docker.NewClient()
+	store, _ := NewFileStore(filePath)
 	return &Collector{
-		client:        client,
+		client:        docker.NewClient(),
 		interval:      interval,
 		maxConcurrent: maxConcurrent,
 		filePath:      filePath,
 		fileExtension: fileExtension,
 		ignoreNames:   collections.NewList(ignoreNames...),
+		store:         store,
 	}
 }
 
@@ -107,11 +109,14 @@ func (c *Collector) collect() {
 		return
 	}
 
+	// 过滤容器
+	containers.RemoveAll(func(item docker.Container) bool {
+		return c.ignoreNames.Contains(item.Name)
+	})
+
+	// 并行采集
 	containers.Parallel(c.maxConcurrent, func(cnt *docker.Container) {
-		// 排除忽略的容器
-		if !c.ignoreNames.Contains(cnt.Name) {
-			c.collectContainer(cnt)
-		}
+		c.collectContainer(cnt)
 	})
 }
 
@@ -138,59 +143,100 @@ func (c *Collector) collectContainer(container *docker.Container) {
 		return
 	}
 
+	// 按修改时间排序（旧的先处理）
+	files = files.OrderBy(func(item docker.FileInfo) any {
+		return item.ModTime
+	}).ToList()
+
+	// 读取最后一个文件地址(后续不允许删除该文件)
+	lastFilePath := files.Last().Path
 	//flog.Infof("[发现] 容器 %s 有 %d 个待采集文件", container.Name, files.Count())
 
 	// 批量读取文件内容
-	batch := c.collectFiles(ctx, container, files)
-	if batch.Lines.Count() == 0 {
+	lstFileBatch := c.collectFiles(ctx, container, files)
+	if lstFileBatch.Count() == 0 {
 		return
 	}
 
 	// 回调处理文件
 	if c.onLogFile != nil {
-		if err := c.onLogFile(&CollectFile{Container: container, Lines: batch.Lines}); err != nil {
+		// 汇总所有文件内容
+		lines := collections.NewList[[]byte]()
+		lstFileBatch.Foreach(func(fileBatch *FileBatch) {
+			lines.AddList(fileBatch.line)
+		})
+
+		if err := c.onLogFile(&CollectFile{Container: container, Lines: lines}); err != nil {
 			flog.Errorf("[上传失败] 容器 %s: %v", container.Name, err)
 			return
 		}
 	}
 
 	// 上传成功，删除已读取的文件
-	batch.Files.Foreach(func(file *docker.FileInfo) {
-		c.client.Container.DeleteFile(container.ID, file.Path, ctx)
+	lstFileBatch.For(func(index int, fileBatch *FileBatch) {
+		// 更新偏移量
+		fileBatch.off.Offset += int64(len(fileBatch.content))
+		fileBatch.off.FileSize = fileBatch.file.Size
+		fileBatch.off.LastReadTime = time.Now()
+		fileBatch.off.LastModifyTime = fileBatch.file.ModTime
+		c.saveOffset(fileBatch.off)
+
+		// 不是最后一个文件,可以删除
+		if fileBatch.file.Path != lastFilePath {
+			c.client.Container.DeleteFile(container.ID, fileBatch.file.Path, ctx)
+			// 删除偏移量记录
+			c.store.Delete(container.ID, fileBatch.file.Path)
+		}
 	})
 }
 
 // FileBatch 文件批次
 type FileBatch struct {
-	Files collections.List[docker.FileInfo]
-	Lines collections.List[[]byte]
+	file    *docker.FileInfo         // 文件
+	content []byte                   // 从容器中读取的原始内容
+	line    collections.List[[]byte] // 换行后的内容
+	off     *FileOffset              // 文件的偏移
 }
 
 // collectFiles 批量采集文件
-func (c *Collector) collectFiles(ctx context.Context, container *docker.Container, files collections.List[docker.FileInfo]) *FileBatch {
-	batch := &FileBatch{
-		Files: collections.NewList[docker.FileInfo](),
-		Lines: collections.NewList[[]byte](),
-	}
-
+func (c *Collector) collectFiles(ctx context.Context, container *docker.Container, files collections.List[docker.FileInfo]) collections.List[FileBatch] {
+	lstFileBatch := collections.NewList[FileBatch]()
 	files.Foreach(func(file *docker.FileInfo) {
-		content, err := c.client.Container.ReadFileFromContainer(container.ID, file.Path, ctx)
-		if err != nil {
-			flog.Warningf("[读取失败] 容器: %s ,%s: %v", container.Name, file.Path, err)
+		// 获取偏移量
+		off := c.getOffset(container.ID, file.Path)
+		if off == nil {
+			off = &FileOffset{ContainerID: container.ID, ContainerName: container.Name, FilePath: file.Path, Offset: 0, FileSize: 0}
+		}
+
+		// 检查文件是否有新内容
+		if file.Size <= off.Offset {
 			return
 		}
 
+		// 检查文件是否被rotate（文件变小了）
+		if file.Size < off.FileSize {
+			flog.Infof("[检测] 文件 %s 可能被rotate，从头开始读取\n", file.Path)
+			off.Offset = 0
+		}
+
+		// 增量读取文件内容
+		content := c.client.Container.ReadFileFromContainerByOffset(container.ID, file.Path, off.Offset, ctx)
+		if len(content) == 0 {
+			return
+		}
+
+		// 解析日志行
 		lines := c.parseLogLines(content)
 		if lines.Count() == 0 {
 			return
 		}
 
-		batch.Files.Add(*file)
-		batch.Lines.AddList(lines)
-		flog.Infof("[采集] 容器 %s 文件 %s (%d 行)", container.Name, file.Name, lines.Count())
+		flog.Infof("[采集] 容器 %s 文件 %s (%d 字节, %d 行)\n", container.Name, file.Name, len(content), lines.Count())
+
+		lstFileBatch.Add(FileBatch{file: file, content: content, line: lines, off: off})
 	})
 
-	return batch
+	return lstFileBatch
 }
 
 // parseLogLines 解析文件内容行（按\n分割）
@@ -207,4 +253,20 @@ func (c *Collector) parseLogLines(content []byte) collections.List[[]byte] {
 	}
 
 	return lst
+}
+
+// getOffset 获取文件偏移量
+func (c *Collector) getOffset(containerID, filePath string) *FileOffset {
+	return c.store.Get(containerID, filePath)
+}
+
+// saveOffset 保存文件偏移量
+func (c *Collector) saveOffset(off *FileOffset) {
+	c.store.Set(off)
+}
+
+// CleanOldOffsets 清理过期的偏移量记录
+func (c *Collector) CleanOldOffsets() {
+	// 清理7天前的记录
+	c.store.Clean(time.Now().AddDate(0, 0, -7))
 }
