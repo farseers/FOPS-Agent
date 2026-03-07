@@ -215,7 +215,7 @@ func (c *Collector) collectFiles(ctx context.Context, container *docker.Containe
 
 		// 检查文件是否被rotate（文件变小了）
 		if file.Size < off.FileSize {
-			flog.Infof("[检测] 文件 %s 可能被rotate，从头开始读取\n", file.Path)
+			flog.Infof("[检测] 文件 %s 可能被rotate, 从头开始读取", file.Path)
 			off.Offset = 0
 		}
 
@@ -231,7 +231,7 @@ func (c *Collector) collectFiles(ctx context.Context, container *docker.Containe
 			return
 		}
 
-		flog.Infof("[采集] 容器 %s 文件 %s (%d 字节, %d 行)\n", container.Name, file.Name, len(content), lines.Count())
+		flog.Infof("[采集] 容器 %s 文件 %s (%d 字节, %d 行)", container.Name, file.Name, len(content), lines.Count())
 
 		lstFileBatch.Add(FileBatch{file: file, content: content, line: lines, off: off})
 	})

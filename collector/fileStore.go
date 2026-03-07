@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+
+	"github.com/farseer-go/fs/flog"
 )
 
 // FileOffset 文件偏移量信息
@@ -48,7 +50,7 @@ func NewFileStore(dir string) (*FileStore, error) {
 
 	// 加载已有数据
 	if err := store.load(); err != nil {
-		fmt.Printf("[警告] 加载偏移量数据失败: %v\n", err)
+		flog.Warningf("[警告] 加载偏移量数据失败: %v", err)
 	}
 
 	return store, nil
