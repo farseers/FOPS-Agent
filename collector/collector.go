@@ -12,11 +12,11 @@ import (
 	"github.com/farseer-go/fs/flog"
 )
 
-// LogFile 日志文件
-type LogFile struct {
+// CollectFile 文件
+type CollectFile struct {
 	// Container 容器信息
 	Container *docker.Container
-	// Lines 日志行
+	// Lines 文件内容行
 	Lines collections.List[[]byte]
 }
 
@@ -25,11 +25,11 @@ type Collector struct {
 	client        *docker.Client // Docker客户端
 	interval      time.Duration  // 采集间隔
 	maxConcurrent int            // 最大并发数
-	filePath      string         // 采集的日志文件路径（相对于容器内）
+	filePath      string         // 采集的文件路径（相对于容器内）
 	fileExtension string         // 文件扩展名
 
 	// 事件回调
-	onLogFile func(logFile *LogFile) error
+	onLogFile func(logFile *CollectFile) error
 
 	// 控制
 	ctx    context.Context
@@ -49,8 +49,8 @@ func NewCollector(filePath string, fileExtension string, interval time.Duration,
 	}
 }
 
-// OnLogFile 设置日志文件回调（整个文件回调一次）
-func (c *Collector) OnLogFile(fn func(logFile *LogFile) error) {
+// OnLogFile 设置文件回调（整个文件回调一次）
+func (c *Collector) OnLogFile(fn func(logFile *CollectFile) error) {
 	c.onLogFile = fn
 }
 
@@ -110,16 +110,16 @@ func (c *Collector) collect() {
 	})
 }
 
-// collectContainer 采集单个容器的日志
+// collectContainer 采集单个容器文件
 func (c *Collector) collectContainer(container *docker.Container) {
 	ctx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
 	defer cancel()
 
-	flog.Infof("正在读取%s的文件", container.Name)
-	// 获取容器内的日志文件列表（已排除current.log）
+	//flog.Infof("正在读取%s的文件", container.Name)
+	// 获取容器内的文件列表（已排除current.*）
 	files, err := c.client.Container.ListLogFiles(container.ID, c.filePath, c.fileExtension, 100, ctx)
 	if err != nil {
-		flog.Warningf("[跳过] 容器 %s 获取日志文件列表失败: %v", container.Name, err)
+		flog.Warningf("[跳过] 容器 %s 获取文件列表失败: %v", container.Name, err)
 		return
 	}
 
@@ -129,11 +129,11 @@ func (c *Collector) collectContainer(container *docker.Container) {
 	})
 
 	if files.Count() == 0 || strings.Contains(files.First().Name, "no such file") {
-		flog.Infof("%s,未读取到文件", container.Name)
+		//flog.Infof("%s,未读取到文件", container.Name)
 		return
 	}
 
-	flog.Infof("[发现] 容器 %s 有 %d 个待采集文件", container.Name, files.Count())
+	//flog.Infof("[发现] 容器 %s 有 %d 个待采集文件", container.Name, files.Count())
 
 	// 批量读取文件内容
 	batch := c.collectFiles(ctx, container, files)
@@ -141,9 +141,9 @@ func (c *Collector) collectContainer(container *docker.Container) {
 		return
 	}
 
-	// 回调处理日志文件
+	// 回调处理文件
 	if c.onLogFile != nil {
-		if err := c.onLogFile(&LogFile{Container: container, Lines: batch.Lines}); err != nil {
+		if err := c.onLogFile(&CollectFile{Container: container, Lines: batch.Lines}); err != nil {
 			flog.Errorf("[上传失败] 容器 %s: %v", container.Name, err)
 			return
 		}
@@ -171,7 +171,7 @@ func (c *Collector) collectFiles(ctx context.Context, container *docker.Containe
 	files.Foreach(func(file *docker.FileInfo) {
 		content, err := c.client.Container.ReadFileFromContainer(container.ID, file.Path, ctx)
 		if err != nil {
-			flog.Errorf("[读取失败] 文件 %s: %v", file.Path, err)
+			flog.Warningf("[读取失败] 容器: %s ,%s: %v", container.Name, file.Path, err)
 			return
 		}
 
@@ -188,7 +188,7 @@ func (c *Collector) collectFiles(ctx context.Context, container *docker.Containe
 	return batch
 }
 
-// parseLogLines 解析日志行（按\n分割）
+// parseLogLines 解析文件内容行（按\n分割）
 func (c *Collector) parseLogLines(content []byte) collections.List[[]byte] {
 	// 按换行符分割
 	lines := bytes.Split(content, []byte("\n"))

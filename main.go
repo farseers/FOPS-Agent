@@ -31,6 +31,8 @@ func main() {
 	if dockerInfo.ServerVersion != "" {
 		// 采集日志
 		CollectLog(wsServer)
+		// 采集链路数据
+		CollectLinkTrace(wsServer)
 
 		// 监听docker事件
 		go func() {
