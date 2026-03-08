@@ -115,7 +115,7 @@ func (c *Collector) collect() {
 	})
 
 	// 并行采集
-	containers.Parallel(1, func(cnt *docker.Container) {
+	containers.Parallel(c.maxConcurrent, func(cnt *docker.Container) {
 		c.collectContainer(cnt)
 	})
 }
@@ -125,7 +125,7 @@ func (c *Collector) collectContainer(container *docker.Container) {
 	ctx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
 	defer cancel()
 
-	flog.Infof("正在读取%s的文件", container.Name)
+	//flog.Infof("正在读取%s的文件", container.Name)
 	// 获取容器内的文件列表（已排除current.*）
 	files, err := c.client.Container.ListLogFiles(container.ID, c.filePath, c.fileExtension, 100, ctx)
 	if err != nil {
@@ -181,6 +181,7 @@ func (c *Collector) collectContainer(container *docker.Container) {
 			c.client.Container.DeleteFile(container.ID, fileBatch.file.Path, ctx)
 			// 删除偏移量记录
 			c.store.Delete(container.ID, fileBatch.file.Path)
+			flog.Infof("[删除文件] 容器 %s: %s", container.Name, fileBatch.file.Path)
 		}
 	})
 }
