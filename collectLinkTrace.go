@@ -39,7 +39,7 @@ func CollectLinkTrace(wsServer string, ignoreNames []string) {
 	}
 
 	// 采集容器日志并上传到fops
-	logCollector := collector.NewCollector("/var/log/linkTrace/", "trace", 5*time.Second, 10, ignoreNames)
+	logCollector := collector.NewCollector("/var/log/linkTrace/", "trace", 5*time.Second, 2, ignoreNames)
 	logCollector.OnLogFile(func(logFile *collector.CollectFile) error {
 		lstData := collections.NewList[trace.TraceContext]()
 		logFile.Lines.Foreach(func(line *string) {
