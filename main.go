@@ -5,6 +5,7 @@ import (
 	"github.com/farseer-go/fs"
 	"github.com/farseer-go/fs/configure"
 	"github.com/farseer-go/fs/flog"
+	"github.com/farseer-go/webapi"
 )
 
 func main() {
@@ -54,5 +55,7 @@ func main() {
 		// }()
 	}
 
+	webapi.UsePprof()
+	webapi.Run(":8890")
 	fs.Run()
 }

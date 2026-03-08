@@ -4,8 +4,5 @@ Container:
   IgnoreName: 
     - "portainer-agent"
     - "portainer-ce"
-    - "lbui-admin"
-    - "lbui-user"
     - "registry"
     - "traefik"
-    - "vip8"
