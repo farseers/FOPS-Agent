@@ -97,10 +97,10 @@ func (c *Collector) run() {
 
 // collect 执行一次采集
 func (c *Collector) collect() {
-	startTime := time.Now()
-	defer func() {
-		flog.Infof("[采集完成] 耗时: %v", time.Since(startTime))
-	}()
+	// startTime := time.Now()
+	// defer func() {
+	// 	flog.Infof("[采集完成] 耗时: %v", time.Since(startTime))
+	// }()
 
 	// 获取所有容器
 	containers, err := c.client.Container.List("", nil)
