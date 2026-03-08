@@ -19,7 +19,7 @@ type FileOffset struct {
 	ContainerName string `json:"containerName"`
 	// FilePath 文件路径
 	FilePath string `json:"filePath"`
-	// Offset 当前读取偏移量
+	// Offset 当前读取偏移量(行)
 	Offset int64 `json:"offset"`
 	// FileSize 文件大小（上次读取时）
 	FileSize int64 `json:"fileSize"`

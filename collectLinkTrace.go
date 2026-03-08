@@ -42,9 +42,9 @@ func CollectLinkTrace(wsServer string, ignoreNames []string) {
 	logCollector := collector.NewCollector("/var/log/linkTrace/", "trace", 5*time.Second, 10, ignoreNames)
 	logCollector.OnLogFile(func(logFile *collector.CollectFile) error {
 		lstData := collections.NewList[trace.TraceContext]()
-		logFile.Lines.Foreach(func(line *[]byte) {
+		logFile.Lines.Foreach(func(line *string) {
 			var logData trace.TraceContext
-			snc.Unmarshal(*line, &logData)
+			snc.Unmarshal([]byte(*line), &logData)
 			lstData.Add(logData)
 		})
 

@@ -17,7 +17,7 @@ type CollectFile struct {
 	// Container 容器信息
 	Container *docker.Container
 	// Lines 文件内容行
-	Lines collections.List[[]byte]
+	Lines collections.List[string]
 }
 
 // Collector 采集器
@@ -115,7 +115,7 @@ func (c *Collector) collect() {
 	})
 
 	// 并行采集
-	containers.Parallel(c.maxConcurrent, func(cnt *docker.Container) {
+	containers.Parallel(1, func(cnt *docker.Container) {
 		c.collectContainer(cnt)
 	})
 }
@@ -125,18 +125,13 @@ func (c *Collector) collectContainer(container *docker.Container) {
 	ctx, cancel := context.WithTimeout(c.ctx, 60*time.Second)
 	defer cancel()
 
-	//flog.Infof("正在读取%s的文件", container.Name)
+	flog.Infof("正在读取%s的文件", container.Name)
 	// 获取容器内的文件列表（已排除current.*）
 	files, err := c.client.Container.ListLogFiles(container.ID, c.filePath, c.fileExtension, 100, ctx)
 	if err != nil {
 		flog.Warningf("[跳过] 容器 %s 获取文件列表失败: %v", container.Name, err)
 		return
 	}
-
-	// 移除当前文件
-	files.RemoveAll(func(file docker.FileInfo) bool {
-		return strings.HasPrefix(file.Name, "current.")
-	})
 
 	if files.Count() == 0 || strings.Contains(files.First().Name, "no such file") {
 		//flog.Infof("%s,未读取到文件", container.Name)
@@ -161,7 +156,7 @@ func (c *Collector) collectContainer(container *docker.Container) {
 	// 回调处理文件
 	if c.onLogFile != nil {
 		// 汇总所有文件内容
-		lines := collections.NewList[[]byte]()
+		lines := collections.NewList[string]()
 		lstFileBatch.Foreach(func(fileBatch *FileBatch) {
 			lines.AddList(fileBatch.line)
 		})
@@ -175,7 +170,7 @@ func (c *Collector) collectContainer(container *docker.Container) {
 	// 上传成功，删除已读取的文件
 	lstFileBatch.For(func(index int, fileBatch *FileBatch) {
 		// 更新偏移量
-		fileBatch.off.Offset += int64(len(fileBatch.content))
+		fileBatch.off.Offset += int64(fileBatch.line.Count())
 		fileBatch.off.FileSize = fileBatch.file.Size
 		fileBatch.off.LastReadTime = time.Now()
 		fileBatch.off.LastModifyTime = fileBatch.file.ModTime
@@ -192,10 +187,10 @@ func (c *Collector) collectContainer(container *docker.Container) {
 
 // FileBatch 文件批次
 type FileBatch struct {
-	file    *docker.FileInfo         // 文件
-	content []byte                   // 从容器中读取的原始内容
-	line    collections.List[[]byte] // 换行后的内容
-	off     *FileOffset              // 文件的偏移
+	file *docker.FileInfo // 文件
+	//content []byte                   // 从容器中读取的原始内容
+	line collections.List[string] // 换行后的内容
+	off  *FileOffset              // 文件的偏移
 }
 
 // collectFiles 批量采集文件
@@ -208,11 +203,6 @@ func (c *Collector) collectFiles(ctx context.Context, container *docker.Containe
 			off = &FileOffset{ContainerID: container.ID, ContainerName: container.Name, FilePath: file.Path, Offset: 0, FileSize: 0}
 		}
 
-		// 检查文件是否有新内容
-		if file.Size <= off.Offset {
-			return
-		}
-
 		// 检查文件是否被rotate（文件变小了）
 		if file.Size < off.FileSize {
 			flog.Infof("[检测] 文件 %s 可能被rotate, 从头开始读取", file.Path)
@@ -220,20 +210,20 @@ func (c *Collector) collectFiles(ctx context.Context, container *docker.Containe
 		}
 
 		// 增量读取文件内容
-		content := c.client.Container.ReadFileFromContainerByOffset(container.ID, file.Path, off.Offset, ctx)
-		if len(content) == 0 {
-			return
-		}
-
-		// 解析日志行
-		lines := c.parseLogLines(content)
+		lines := c.client.Container.ReadFileFromContainerByOffset(container.ID, file.Path, off.Offset, ctx)
 		if lines.Count() == 0 {
 			return
 		}
 
-		flog.Infof("[采集] 容器 %s 文件 %s (%d 字节, %d 行)", container.Name, file.Name, len(content), lines.Count())
+		// // 解析日志行
+		// lines := c.parseLogLines(content)
+		// if lines.Count() == 0 {
+		// 	return
+		// }
 
-		lstFileBatch.Add(FileBatch{file: file, content: content, line: lines, off: off})
+		flog.Infof("[采集] 容器 %s 文件 %s (%d - %d 行)", container.Name, file.Name, off.Offset+1, off.Offset+1+int64(lines.Count()))
+
+		lstFileBatch.Add(FileBatch{file: file, line: lines, off: off})
 	})
 
 	return lstFileBatch
