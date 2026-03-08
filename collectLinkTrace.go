@@ -56,7 +56,7 @@ func CollectLinkTrace(wsServer string, ignoreNames []string) {
 		// 2. 使用全局 Client 发起请求
 		rsp, err := traceHttpClient.Do(newRequest)
 		if err != nil {
-			return fmt.Errorf("上传链路到FOPS失败: %s", err.Error())
+			return fmt.Errorf("上传链路失败: %s", err.Error())
 		}
 
 		// 3. 关键点：使用 defer 确保 Body 最终被关闭
@@ -66,7 +66,7 @@ func CollectLinkTrace(wsServer string, ignoreNames []string) {
 		// 4. 读取数据（注意：NewApiResponseByReader 内部读取完后，外面依然要 Close）
 		apiRsp := core.NewApiResponseByReader[any](rsp.Body)
 		if apiRsp.StatusCode != 200 {
-			return fmt.Errorf("上传链路到FOPS失败 (%v) : %s", rsp.StatusCode, apiRsp.StatusMessage)
+			return fmt.Errorf("上传链路失败 (%v) : %s", rsp.StatusCode, apiRsp.StatusMessage)
 		}
 
 		return nil
