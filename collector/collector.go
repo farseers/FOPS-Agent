@@ -30,6 +30,11 @@ type Collector struct {
 	ignoreNames   collections.List[string] // 忽略的容器名称
 	store         *FileStore
 
+	// 容器列表缓存
+	containerCache    collections.List[docker.Container]
+	containerCacheAt  time.Time
+	containerCacheTTL time.Duration
+
 	// 事件回调
 	onLogFile func(logFile *CollectFile) error
 
@@ -37,19 +42,21 @@ type Collector struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	mu     sync.Mutex // 采集锁，防止重叠执行
 }
 
 // NewCollector 创建采集器
 func NewCollector(filePath string, fileExtension string, interval time.Duration, maxConcurrent int, ignoreNames []string) *Collector {
 	store, _ := NewFileStore(filePath)
 	return &Collector{
-		client:        docker.NewClient(),
-		interval:      interval,
-		maxConcurrent: maxConcurrent,
-		filePath:      filePath,
-		fileExtension: fileExtension,
-		ignoreNames:   collections.NewList(ignoreNames...),
-		store:         store,
+		client:            docker.NewClient(),
+		interval:          interval,
+		maxConcurrent:     maxConcurrent,
+		filePath:          filePath,
+		fileExtension:     fileExtension,
+		ignoreNames:       collections.NewList(ignoreNames...),
+		store:             store,
+		containerCacheTTL: 30 * time.Second, // 容器列表缓存30秒
 	}
 }
 
@@ -97,15 +104,16 @@ func (c *Collector) run() {
 
 // collect 执行一次采集
 func (c *Collector) collect() {
-	// startTime := time.Now()
-	// defer func() {
-	// 	flog.Infof("[采集完成] 耗时: %v", time.Since(startTime))
-	// }()
+	// 使用 TryLock 防止重叠执行
+	if !c.mu.TryLock() {
+		flog.Debugf("[跳过] 上一次采集(%s)还在执行中", c.fileExtension)
+		return
+	}
+	defer c.mu.Unlock()
 
-	// 获取所有容器
-	containers, err := c.client.Container.List("", nil)
-	if err != nil {
-		flog.Warningf("获取容器列表失败: %v", err)
+	// 获取所有容器（带缓存）
+	containers := c.getContainers()
+	if containers.Count() == 0 {
 		return
 	}
 
@@ -114,10 +122,34 @@ func (c *Collector) collect() {
 		return c.ignoreNames.Contains(item.Name)
 	})
 
+	if containers.Count() == 0 {
+		return
+	}
+
 	// 并行采集
 	containers.Parallel(c.maxConcurrent, func(cnt *docker.Container) {
 		c.collectContainer(cnt)
 	})
+}
+
+// getContainers 获取容器列表（带缓存）
+func (c *Collector) getContainers() collections.List[docker.Container] {
+	// 缓存有效期内直接返回
+	if time.Since(c.containerCacheAt) < c.containerCacheTTL && c.containerCache.Count() > 0 {
+		return c.containerCache
+	}
+
+	// 获取新的容器列表
+	containers, err := c.client.Container.List("", nil)
+	if err != nil {
+		flog.Warningf("获取容器列表失败: %v", err)
+		// 返回旧缓存（即使过期）
+		return c.containerCache
+	}
+
+	c.containerCache = containers
+	c.containerCacheAt = time.Now()
+	return containers
 }
 
 // collectContainer 采集单个容器文件
@@ -134,7 +166,6 @@ func (c *Collector) collectContainer(container *docker.Container) {
 	}
 
 	if files.Count() == 0 || strings.Contains(files.First().Name, "no such file") {
-		//flog.Infof("%s,未读取到文件", container.Name)
 		return
 	}
 
@@ -145,7 +176,6 @@ func (c *Collector) collectContainer(container *docker.Container) {
 
 	// 读取最后一个文件地址(后续不允许删除该文件)
 	lastFilePath := files.Last().Path
-	//flog.Infof("[发现] 容器 %s 有 %d 个待采集文件", container.Name, files.Count())
 
 	// 批量读取文件内容
 	lstFileBatch := c.collectFiles(ctx, container, files)
@@ -188,8 +218,7 @@ func (c *Collector) collectContainer(container *docker.Container) {
 
 // FileBatch 文件批次
 type FileBatch struct {
-	file *docker.FileInfo // 文件
-	//content []byte                   // 从容器中读取的原始内容
+	file *docker.FileInfo         // 文件
 	line collections.List[string] // 换行后的内容
 	off  *FileOffset              // 文件的偏移
 }
@@ -216,14 +245,7 @@ func (c *Collector) collectFiles(ctx context.Context, container *docker.Containe
 			return
 		}
 
-		// // 解析日志行
-		// lines := c.parseLogLines(content)
-		// if lines.Count() == 0 {
-		// 	return
-		// }
-
-		flog.Infof("[采集] 容器 %s 文件 %s (%d - %d 行)", container.Name, file.Name, off.Offset+1, off.Offset+1+int64(lines.Count()))
-
+		flog.Infof("[采集] 容器 %s 文件 %s (%d - %d 行)", container.Name, file.Name, off.Offset+1, lines.Count())
 		lstFileBatch.Add(FileBatch{file: file, line: lines, off: off})
 	})
 
