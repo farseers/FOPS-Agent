@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fops-agent/container"
 	"strings"
 	"time"
 
@@ -23,7 +24,7 @@ type Res struct {
 	Role                string                                 // 节点角色   manager worker
 }
 
-func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *docker.Client) {
+func getResource(wsServer string, dockerInfo docker.DockerInfo, containerMgr *container.Manager) {
 	wsServer += "/ws/resource"
 
 	if dockerInfo.ServerVersion == "" {
@@ -42,13 +43,13 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 		for {
 			sw2 := stopwatch.StartNew()
 			// 获取所有容器列表
-			containers, _ := dockerClient.Container.List("", nil)
+			containerIDs := containerMgr.GetAllContainerIDs()
 			// 发送消息
 			res := Res{
 				IsDockerMaster:      dockerInfo.Swarm.ControlAvailable,
 				DockerEngineVersion: dockerInfo.ServerVersion,
 				Host:                system.GetResource("/", "/home"),
-				Dockers:             dockerClient.Stats(containers),
+				Dockers:             containerMgr.Client.Stats(containerIDs),
 				Availability:        dockerInfo.Swarm.LocalNodeState,
 				Role:                "Worker",
 			}

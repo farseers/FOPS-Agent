@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/farseer-go/collections"
 	"github.com/farseer-go/docker"
 	"github.com/farseer-go/fs/flog"
 )
@@ -95,6 +96,16 @@ func (m *Manager) GetAllContainers() []*docker.ContainerIdInspectJson {
 	var result []*docker.ContainerIdInspectJson
 	m.containers.Range(func(key, value interface{}) bool {
 		result = append(result, value.(*docker.ContainerIdInspectJson))
+		return true
+	})
+	return result
+}
+
+// GetAllContainerIDs 获取所有容器ID
+func (m *Manager) GetAllContainerIDs() collections.List[string] {
+	var result collections.List[string]
+	m.containers.Range(func(key, value interface{}) bool {
+		result.Add(key.(string))
 		return true
 	})
 	return result

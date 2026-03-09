@@ -26,7 +26,7 @@ func main() {
 	flog.Infof("当前容器版本: %s", dockerInfo.ServerVersion)
 
 	// 持续上传系统资源
-	go getResource(cfg.FopsWsServer, dockerInfo, containerMgr.Client)
+	go getResource(cfg.FopsWsServer, dockerInfo, containerMgr)
 
 	// 如果启用了docker
 	if dockerInfo.ServerVersion != "" {
