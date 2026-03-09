@@ -103,15 +103,7 @@ func (c *FileCollector) Name() string {
 func (c *FileCollector) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	// 启动 output
-	if c.output != nil {
-		if err := c.output.Start(); err != nil {
-			return fmt.Errorf("启动输出器失败: %w", err)
-		}
-		c.output.SetCallback(func(filePath string) {
-			c.OnOutputSuccess(filePath)
-		})
-	}
+	// output 由 FileWatcherManager 统一管理，这里不再启动
 
 	// 构建实际监听路径：/proc/PID/root/watchDir
 	actualPath := c.getActualPath()
@@ -137,7 +129,7 @@ func (c *FileCollector) Start(ctx context.Context) error {
 		return fmt.Errorf("添加目录监听失败: %w", err)
 	}
 
-	flog.Infof("[FileCollector:%s] 开始监听目录: %s", c.name, actualPath)
+	flog.Infof("[%s:%s] 开始监听目录: %s", c.containerName, c.name, actualPath)
 
 	// 启动事件处理协程
 	c.wg.Add(1)
@@ -155,9 +147,7 @@ func (c *FileCollector) Stop() {
 	if c.watcher != nil {
 		c.watcher.Close()
 	}
-	if c.output != nil {
-		c.output.Stop()
-	}
+	// output 由 FileWatcherManager 统一管理，这里不再停止
 }
 
 // getActualPath 获取实际监听路径
@@ -172,7 +162,7 @@ func (c *FileCollector) getActualPath() string {
 func (c *FileCollector) scanExistingFiles(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		flog.Warningf("[FileCollector:%s] 扫描目录失败: %v", c.name, err)
+		flog.Warningf("[%s:%s] 扫描目录失败: %v", c.containerName, c.name, err)
 		return
 	}
 
@@ -256,8 +246,8 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 		c.readFile(state, isCurrent)
 	}
 
-	flog.Infof("[FileCollector:%s] 扫描到 %d 个文件，当前文件: %s",
-		c.name, len(fileInfos), filepath.Base(currentFilePath))
+	flog.Infof("[%s:%s] 扫描到 %d 个文件，当前: %s",
+		c.containerName, c.name, len(fileInfos), filepath.Base(currentFilePath))
 }
 
 // handleEvents 处理 fsnotify 事件
@@ -279,7 +269,7 @@ func (c *FileCollector) handleEvents() {
 			if !ok {
 				return
 			}
-			flog.Warningf("[FileCollector:%s] fsnotify 错误: %v", c.name, err)
+			flog.Warningf("[%s:%s] fsnotify 错误: %v", c.containerName, c.name, err)
 		}
 	}
 }
@@ -302,7 +292,7 @@ func (c *FileCollector) processEvent(event fsnotify.Event) {
 
 // handleFileCreate 处理文件创建事件
 func (c *FileCollector) handleFileCreate(filePath string) {
-	flog.Infof("[FileCollector:%s] 新文件创建: %s", c.name, filepath.Base(filePath))
+	flog.Infof("[%s:%s] 新文件: %s", c.containerName, c.name, filepath.Base(filePath))
 
 	// 标记上一个文件为已完结
 	c.currentFileMu.Lock()
@@ -328,7 +318,7 @@ func (c *FileCollector) handleFileCreate(filePath string) {
 	// 添加新文件状态
 	info, err := os.Stat(filePath)
 	if err != nil {
-		flog.Warningf("[FileCollector:%s] 获取文件信息失败: %v", c.name, err)
+		flog.Warningf("[%s:%s] 获取文件信息失败: %v", c.containerName, c.name, err)
 		return
 	}
 
@@ -376,7 +366,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 
 	// 检查文件是否被 rotate（变小了）
 	if info.Size() < state.size {
-		flog.Infof("[FileCollector:%s] 文件可能被 rotate: %s", c.name, filepath.Base(filePath))
+		flog.Infof("[%s:%s] 文件rotate: %s", c.containerName, c.name, filepath.Base(filePath))
 		state.offset = 0
 	}
 
@@ -392,30 +382,34 @@ func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
 	// 打开文件
 	file, err := os.Open(state.path)
 	if err != nil {
-		flog.Warningf("[FileCollector:%s] 打开文件失败: %v", c.name, err)
+		flog.Warningf("[%s:%s] 打开文件失败: %v", c.containerName, c.name, err)
 		return
 	}
 	defer file.Close()
 
-	// 定位到偏移量位置
+	// 定位到偏移量位置（字节）
 	if state.offset > 0 {
 		_, err = file.Seek(state.offset, 0)
 		if err != nil {
-			flog.Warningf("[FileCollector:%s] 定位文件失败: %v", c.name, err)
+			flog.Warningf("[%s:%s] 定位文件失败: %v", c.containerName, c.name, err)
 			return
 		}
 	}
 
 	// 使用 bufio.Reader 读取，避免 Scanner 的行长度限制
 	var lines []string
+	var bytesRead int64
+
 	reader := bufio.NewReader(file)
-	lineCount := int64(0)
 
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
 			break // EOF 或其他错误
 		}
+
+		// 统计读取的字节数（原始字节，包含换行符）
+		bytesRead += int64(len(line))
 
 		// 去掉换行符
 		line = strings.TrimSuffix(line, "\n")
@@ -424,15 +418,14 @@ func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
 		if line != "" {
 			lines = append(lines, line)
 		}
-		lineCount++
 	}
 
 	if len(lines) == 0 {
 		return
 	}
 
-	// 更新偏移量（按行数）
-	state.offset += lineCount
+	// 更新偏移量（字节）
+	state.offset += bytesRead
 
 	// 保存偏移量
 	c.store.Set(&FileOffset{
@@ -462,7 +455,7 @@ func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
 		c.output.Write(data)
 	}
 
-	flog.Debugf("[FileCollector:%s] 读取 %d 行: %s", c.name, len(lines), filepath.Base(state.path))
+	flog.Debugf("[%s:%s] %s 读取 %d 行", c.containerName, c.name, filepath.Base(state.path), len(lines))
 }
 
 // OnOutputSuccess 输出成功回调
@@ -506,7 +499,7 @@ func (c *FileCollector) tryDeletePendingFiles() {
 
 		// 删除文件
 		if err := os.Remove(filePath); err != nil {
-			flog.Warningf("[FileCollector:%s] 删除文件失败: %v", c.name, err)
+			flog.Warningf("[%s:%s] 删除文件失败: %v", c.containerName, c.name, err)
 			continue
 		}
 
@@ -521,6 +514,6 @@ func (c *FileCollector) tryDeletePendingFiles() {
 		// 从待删除列表移除
 		delete(c.pendingDelete, filePath)
 
-		flog.Infof("[FileCollector:%s] 删除文件: %s", c.name, filepath.Base(filePath))
+		flog.Infof("[%s:%s] 删除文件: %s", c.containerName, c.name, filepath.Base(filePath))
 	}
 }

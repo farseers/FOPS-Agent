@@ -10,7 +10,6 @@ import (
 
 	"fops-agent/collector"
 	"fops-agent/config"
-	"fops-agent/uploader"
 
 	"github.com/farseer-go/fs/flog"
 )
@@ -28,7 +27,7 @@ type ContainerWatcher struct {
 }
 
 // NewContainerWatcher 创建容器文件监视器
-func NewContainerWatcher(containerID, containerName string, pid int, cfg *config.Config, store *collector.FileStore) (*ContainerWatcher, error) {
+func NewContainerWatcher(containerID, containerName string, pid int, cfg *config.Config, store *collector.FileStore, manager *FileWatcherManager) (*ContainerWatcher, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &ContainerWatcher{
 		containerID:   containerID,
@@ -43,9 +42,17 @@ func NewContainerWatcher(containerID, containerName string, pid int, cfg *config
 	}
 	flog.Infof("[ContainerWatcher] 创建: %s, PID: %d, 应用: %s", containerName, pid, w.appName)
 	for _, cc := range cfg.Collectors {
-		out := uploader.NewHTTPUploader(&cc, cfg.FopsHttpServer)
+		// 使用全局上传器
+		out := manager.GetOutput(cc.Name)
 		col := collector.NewFileCollector(cc.Name, containerID, containerName, w.appName, cc.WatchDir, cc.FileExt, pid, store, out)
 		w.collectors = append(w.collectors, col)
+
+		// 注册回调到全局上传器
+		if out != nil {
+			out.RegisterCallback(cc.Name, func(filePath string) {
+				col.OnOutputSuccess(filePath)
+			})
+		}
 	}
 	return w, nil
 }

@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"fops-agent/config"
 	"fops-agent/output"
 
 	"github.com/farseer-go/fs/flog"
@@ -25,9 +24,10 @@ type HTTPUploader struct {
 	uploadInterval int
 	bufferSizeMB   int
 
-	client   *http.Client
-	buffer   *bufferQueue
-	callback func(filePath string)
+	client    *http.Client
+	buffer    *bufferQueue
+	callbacks map[string]func(filePath string) // collectorName -> callback
+	cbMu      sync.RWMutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -37,23 +37,23 @@ type HTTPUploader struct {
 // bufferQueue 缓冲队列
 type bufferQueue struct {
 	mu        sync.Mutex
-	data      []string        // 存储每行数据
-	filePaths map[string]bool // 记录涉及的文件路径
-	size      int64           // 当前数据大小（字节）
-	maxSize   int64           // 最大大小（字节）
+	data      []string          // 存储每行数据
+	fileInfos map[string]string // filePath -> collectorName
+	size      int64             // 当前数据大小（字节）
+	maxSize   int64             // 最大大小（字节）
 }
 
 // NewBufferQueue 创建缓冲队列
 func NewBufferQueue(maxSizeMB int) *bufferQueue {
 	return &bufferQueue{
 		data:      make([]string, 0),
-		filePaths: make(map[string]bool),
+		fileInfos: make(map[string]string),
 		maxSize:   int64(maxSizeMB) * 1024 * 1024,
 	}
 }
 
 // Add 添加数据
-func (q *bufferQueue) Add(lines []string, filePath string) int64 {
+func (q *bufferQueue) Add(lines []string, filePath string, collectorName string) int64 {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -62,29 +62,26 @@ func (q *bufferQueue) Add(lines []string, filePath string) int64 {
 		q.data = append(q.data, line)
 		size += int64(len(line))
 	}
-	q.filePaths[filePath] = true
+	q.fileInfos[filePath] = collectorName
 	q.size += size
 
 	return q.size
 }
 
 // GetAndClear 获取数据并清空
-func (q *bufferQueue) GetAndClear() ([]string, []string, int64) {
+func (q *bufferQueue) GetAndClear() ([]string, map[string]string, int64) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
 	data := q.data
-	paths := make([]string, 0, len(q.filePaths))
-	for p := range q.filePaths {
-		paths = append(paths, p)
-	}
+	fileInfos := q.fileInfos
 	size := q.size
 
 	q.data = make([]string, 0)
-	q.filePaths = make(map[string]bool)
+	q.fileInfos = make(map[string]string)
 	q.size = 0
 
-	return data, paths, size
+	return data, fileInfos, size
 }
 
 // IsEmpty 是否为空
@@ -95,7 +92,7 @@ func (q *bufferQueue) IsEmpty() bool {
 }
 
 // NewHTTPUploader 创建 HTTP 上传器
-func NewHTTPUploader(cfg *config.CollectorConfig, httpServerURL string) *HTTPUploader {
+func NewHTTPUploader(name string, uploadURL string, httpServerURL string, uploadInterval int, bufferSizeMB int) *HTTPUploader {
 	transport := &http.Transport{
 		MaxIdleConns:    100,
 		IdleConnTimeout: 90 * time.Second,
@@ -105,16 +102,17 @@ func NewHTTPUploader(cfg *config.CollectorConfig, httpServerURL string) *HTTPUpl
 	}
 
 	return &HTTPUploader{
-		name:           cfg.Name,
+		name:           name,
 		serverURL:      httpServerURL,
-		uploadURL:      httpServerURL + cfg.UploadURL,
-		uploadInterval: cfg.UploadInterval,
-		bufferSizeMB:   cfg.BufferSizeMB,
+		uploadURL:      httpServerURL + uploadURL,
+		uploadInterval: uploadInterval,
+		bufferSizeMB:   bufferSizeMB,
 		client: &http.Client{
 			Timeout:   10 * time.Second,
 			Transport: transport,
 		},
-		buffer: NewBufferQueue(cfg.BufferSizeMB),
+		buffer:    NewBufferQueue(bufferSizeMB),
+		callbacks: make(map[string]func(filePath string)),
 	}
 }
 
@@ -131,7 +129,8 @@ func (u *HTTPUploader) Start() error {
 	u.wg.Add(1)
 	go u.uploadLoop()
 
-	flog.Infof("[HTTPUploader:%s] 启动，上传地址: %s，间隔: %ds，缓冲: %dMB", u.name, u.uploadURL, u.uploadInterval, u.bufferSizeMB)
+	flog.Infof("[HTTPUploader:%s] 启动，上传地址: %s，间隔: %ds，缓冲: %dMB",
+		u.name, u.uploadURL, u.uploadInterval, u.bufferSizeMB)
 
 	return nil
 }
@@ -151,7 +150,7 @@ func (u *HTTPUploader) Stop() {
 
 // Write 写入数据
 func (u *HTTPUploader) Write(data *output.Data) {
-	size := u.buffer.Add(data.Lines, data.FilePath)
+	size := u.buffer.Add(data.Lines, data.FilePath, data.CollectorName)
 
 	// 如果超过缓冲区大小，立即触发上传
 	if size >= int64(u.bufferSizeMB)*1024*1024 {
@@ -159,9 +158,11 @@ func (u *HTTPUploader) Write(data *output.Data) {
 	}
 }
 
-// SetCallback 设置成功回调
-func (u *HTTPUploader) SetCallback(callback func(filePath string)) {
-	u.callback = callback
+// RegisterCallback 注册回调
+func (u *HTTPUploader) RegisterCallback(collectorName string, callback func(filePath string)) {
+	u.cbMu.Lock()
+	defer u.cbMu.Unlock()
+	u.callbacks[collectorName] = callback
 }
 
 // uploadLoop 上传循环
@@ -188,28 +189,29 @@ func (u *HTTPUploader) flush() {
 		return
 	}
 
-	data, filePaths, size := u.buffer.GetAndClear()
+	data, fileInfos, size := u.buffer.GetAndClear()
 	if len(data) == 0 {
 		return
 	}
-
-	flog.Debugf("[HTTPUploader:%s] 开始上传 %d 行数据，%.2f MB", u.name, len(data), float64(size)/1024/1024)
 
 	// 构建 JSON
 	body := u.buildJSON(data)
 
 	// 上传
 	if err := u.upload(body); err != nil {
-		flog.Errorf("[HTTPUploader:%s] 上传失败: %v", u.name, err)
+		flog.Errorf("[HTTPUploader:%s] 上传失败 %d 行数据: %v", u.name, len(data), err)
 		return
 	}
 
-	flog.Infof("[HTTPUploader:%s] 上传成功 %d 行数据", u.name, len(data))
+	flog.Infof("[HTTPUploader:%s] 上传成功 %d 行数据，%.2f MB", u.name, len(data), float64(size)/1024/1024)
 
 	// 回调通知上传成功
-	if u.callback != nil {
-		for _, path := range filePaths {
-			u.callback(path)
+	u.cbMu.RLock()
+	defer u.cbMu.RUnlock()
+
+	for filePath, collectorName := range fileInfos {
+		if cb, ok := u.callbacks[collectorName]; ok {
+			cb(filePath)
 		}
 	}
 }

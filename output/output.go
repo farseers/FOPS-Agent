@@ -33,6 +33,6 @@ type Output interface {
 	// Write 写入数据
 	Write(data *Data)
 
-	// SetCallback 设置成功回调
-	SetCallback(callback func(filePath string))
+	// RegisterCallback 注册回调（collectorName -> callback）
+	RegisterCallback(collectorName string, callback func(filePath string))
 }
