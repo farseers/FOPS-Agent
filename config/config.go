@@ -1,10 +1,15 @@
 package config
 
 import (
+	"os"
 	"strings"
 
 	"github.com/farseer-go/fs/configure"
+	"github.com/farseer-go/fs/flog"
 )
+
+// ProcPrefix /proc 路径前缀（默认主机环境，检测到 /host/proc 则为 Docker 环境）
+var ProcPrefix = "/proc"
 
 // Config 全局配置
 type Config struct {
@@ -43,6 +48,12 @@ type CollectorConfig struct {
 
 // Load 从文件加载配置
 func Load() *Config {
+	// 检测运行环境
+	if _, err := os.Stat("/host/proc"); err == nil {
+		ProcPrefix = "/host/proc"
+		flog.Infof("检测到 Docker 环境，使用 /host/proc")
+	}
+
 	cfg := Config{
 		FopsWsServer: configure.GetString("Fops.WsServer"),
 		Container:    configure.ParseConfig[ContainerConfig]("Container"),

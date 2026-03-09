@@ -64,7 +64,7 @@ func (w *ContainerWatcher) detectAppName(cfg *config.Config) string {
 			continue
 		}
 		parentDir := strings.TrimSuffix(filepath.Dir(strings.Replace(cc.WatchDir, "{app}/", "", -1)), "/")
-		actualPath := filepath.Join("/proc", fmt.Sprintf("%d", w.pid), "root", parentDir)
+		actualPath := filepath.Join(config.ProcPrefix, fmt.Sprintf("%d", w.pid), "root", parentDir)
 		entries, err := os.ReadDir(actualPath)
 		if err != nil {
 			continue

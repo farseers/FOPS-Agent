@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"fops-agent/config"
 	"fops-agent/output"
 
 	"github.com/farseer-go/fs/flog"
@@ -154,8 +155,8 @@ func (c *FileCollector) Stop() {
 func (c *FileCollector) getActualPath() string {
 	// 替换 {app} 占位符
 	path := strings.Replace(c.watchDir, "{app}", c.appName, -1)
-	// 添加 /proc/PID/root 前缀
-	return filepath.Join("/proc", fmt.Sprintf("%d", c.pid), "root", path)
+	// 使用 ProcPrefix（自动检测 Docker 或主机环境）
+	return filepath.Join(config.ProcPrefix, fmt.Sprintf("%d", c.pid), "root", path)
 }
 
 // scanExistingFiles 扫描已有文件
