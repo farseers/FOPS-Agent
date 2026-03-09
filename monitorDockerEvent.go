@@ -23,25 +23,26 @@ var dockerEventMap = map[string]string{
 	"detach":        "从容器分离",
 }
 
-func WatchDockerEventJob(dockerClient *docker.Client) {
-	eventResults := dockerClient.Event.Watch()
-	for eventResult := range eventResults {
-		// 过滤其它信息
-		if eventResult.Actor.Attributes.ComDockerSwarmServiceName == "" {
-			continue
-		}
+type MonitorDockerEvent struct {
+}
 
-		// 过滤rm操作 和 容器进程停止事件
-		if eventResult.Action == "destroy" { //  || eventResult.Action == "die"
-			continue
-		}
-
-		// 转换成中文事件描述
-		if cns, exists := dockerEventMap[eventResult.Action]; exists {
-			eventResult.Action = eventResult.Action + cns
-		}
-
-		// 发送消息
-		monitor.SendValue(eventResult.Actor.Attributes.ComDockerSwarmServiceName, "event", eventResult.Actor.Attributes.Name+", "+eventResult.Action)
+func (*MonitorDockerEvent) Handle(event docker.EventResult) {
+	// 过滤其它信息
+	if event.Actor.Attributes.ComDockerSwarmServiceName == "" {
+		return
 	}
+
+	// 过滤rm操作 和 容器进程停止事件
+	if event.Action == "destroy" { //  || eventResult.Action == "die"
+		return
+	}
+
+	// 转换成中文事件描述
+	var actionName = event.Action
+	if cns, exists := dockerEventMap[event.Action]; exists {
+		actionName = event.Action + cns
+	}
+
+	// 发送消息
+	monitor.SendValue(event.Actor.Attributes.ComDockerSwarmServiceName, "event", event.Actor.Attributes.Name+", "+actionName)
 }

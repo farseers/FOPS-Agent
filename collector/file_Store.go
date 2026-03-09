@@ -17,6 +17,10 @@ type FileOffset struct {
 	ContainerID string `json:"containerId"`
 	// ContainerName 容器名称
 	ContainerName string `json:"containerName"`
+	// AppName 应用名称
+	AppName string `json:"appName"`
+	// CollectorName 采集器名称
+	CollectorName string `json:"collectorName"`
 	// FilePath 文件路径
 	FilePath string `json:"filePath"`
 	// Offset 当前读取偏移量(行)
@@ -50,15 +54,15 @@ func NewFileStore(dir string) (*FileStore, error) {
 
 	// 加载已有数据
 	if err := store.load(); err != nil {
-		flog.Warningf("[警告] 加载偏移量数据失败: %v", err)
+		flog.Warningf("[FileStore] 加载偏移量数据失败: %v", err)
 	}
 
 	return store, nil
 }
 
 // getKey 生成缓存key
-func (s *FileStore) getKey(containerID, filePath string) string {
-	return containerID + ":" + filePath
+func (s *FileStore) getKey(containerID, collectorName, filePath string) string {
+	return containerID + ":" + collectorName + ":" + filePath
 }
 
 // load 从文件加载所有偏移量
@@ -84,19 +88,20 @@ func (s *FileStore) load() error {
 			continue
 		}
 
-		key := s.getKey(offset.ContainerID, offset.FilePath)
+		key := s.getKey(offset.ContainerID, offset.CollectorName, offset.FilePath)
 		s.cache[key] = &offset
 	}
 
+	flog.Infof("[FileStore] 加载 %d 个偏移量记录", len(s.cache))
 	return nil
 }
 
 // Get 获取文件偏移量
-func (s *FileStore) Get(containerID, filePath string) *FileOffset {
+func (s *FileStore) Get(containerID, collectorName, filePath string) *FileOffset {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	key := s.getKey(containerID, filePath)
+	key := s.getKey(containerID, collectorName, filePath)
 	offset, ok := s.cache[key]
 	if !ok {
 		return nil
@@ -112,7 +117,7 @@ func (s *FileStore) Set(offset *FileOffset) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := s.getKey(offset.ContainerID, offset.FilePath)
+	key := s.getKey(offset.ContainerID, offset.CollectorName, offset.FilePath)
 	s.cache[key] = offset
 
 	// 异步持久化
@@ -121,8 +126,11 @@ func (s *FileStore) Set(offset *FileOffset) {
 
 // persist 持久化单个偏移量
 func (s *FileStore) persist(offset *FileOffset) error {
-	// 生成文件名：containerID前12位 + 文件路径hash
-	fileName := fmt.Sprintf("%s_%s.json", offset.ContainerID[:min(12, len(offset.ContainerID))], hashString(offset.FilePath))
+	// 生成文件名：collectorName_containerID前12位_文件路径hash
+	fileName := fmt.Sprintf("%s_%s_%s.json",
+		offset.CollectorName,
+		offset.ContainerID[:min(12, len(offset.ContainerID))],
+		hashString(offset.FilePath))
 	filePath := filepath.Join(s.dir, fileName)
 
 	data, err := json.MarshalIndent(offset, "", "  ")
@@ -145,31 +153,41 @@ func (s *FileStore) persist(offset *FileOffset) error {
 }
 
 // Delete 删除文件偏移量
-func (s *FileStore) Delete(containerID, filePath string) {
+func (s *FileStore) Delete(containerID, collectorName, filePath string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	key := s.getKey(containerID, filePath)
+	key := s.getKey(containerID, collectorName, filePath)
 	delete(s.cache, key)
 
 	// 删除文件
-	fileName := fmt.Sprintf("%s_%s.json", containerID[:min(12, len(containerID))], hashString(filePath))
+	fileName := fmt.Sprintf("%s_%s_%s.json",
+		collectorName,
+		containerID[:min(12, len(containerID))],
+		hashString(filePath))
 	filePathFull := filepath.Join(s.dir, fileName)
 	os.Remove(filePathFull)
 }
 
-// List 列出所有偏移量
-func (s *FileStore) List() []*FileOffset {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+// DeleteByContainer 删除容器的所有偏移量
+func (s *FileStore) DeleteByContainer(containerID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	result := make([]*FileOffset, 0, len(s.cache))
-	for _, offset := range s.cache {
-		copy := *offset
-		result = append(result, &copy)
+	// 找到所有该容器的偏移量
+	for key, offset := range s.cache {
+		if offset.ContainerID == containerID {
+			delete(s.cache, key)
+
+			// 删除文件
+			fileName := fmt.Sprintf("%s_%s_%s.json",
+				offset.CollectorName,
+				containerID[:min(12, len(containerID))],
+				hashString(offset.FilePath))
+			filePath := filepath.Join(s.dir, fileName)
+			os.Remove(filePath)
+		}
 	}
-
-	return result
 }
 
 // Clean 清理过期的偏移量记录
@@ -182,27 +200,14 @@ func (s *FileStore) Clean(before time.Time) {
 			delete(s.cache, key)
 
 			// 删除文件
-			fileName := fmt.Sprintf("%s_%s.json",
+			fileName := fmt.Sprintf("%s_%s_%s.json",
+				offset.CollectorName,
 				offset.ContainerID[:min(12, len(offset.ContainerID))],
 				hashString(offset.FilePath))
 			filePath := filepath.Join(s.dir, fileName)
 			os.Remove(filePath)
 		}
 	}
-}
-
-// Sync 同步所有脏数据到磁盘
-func (s *FileStore) Sync() error {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	for _, offset := range s.cache {
-		if err := s.persist(offset); err != nil {
-			return err
-		}
-	}
-
-	return nil
 }
 
 // hashString 简单的字符串hash函数

@@ -1,8 +1,30 @@
 Fops:
   WsServer: "ws://127.0.0.1:8889"
 Container:
-  IgnoreName: 
+# 偏移量存储目录
+  OffsetDir: /var/lib/fops-agent/offset
+  # 忽略的容器名称（前缀匹配）
+  IgnoreNames: 
     - "portainer-agent"
     - "portainer-ce"
     - "registry"
     - "traefik"
+    - "FOPS-AutoBuild"
+
+# 采集器配置
+Collectors:
+  # 日志采集
+  - Name: log
+    WatchDir: /var/log/flog/{app}/
+    FileExt: log
+    UploadURL: /flog/upload
+    UploadInterval: 5
+    BufferSizeMB: 10
+
+  # 链路追踪采集
+  - Name: trace
+    WatchDir: /var/log/linkTrace/{app}/
+    FileExt: trace
+    UploadURL: /linkTrace/upload
+    UploadInterval: 5
+    UufferSizeMB: 10

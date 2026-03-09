@@ -41,12 +41,14 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, dockerClient *do
 
 		for {
 			sw2 := stopwatch.StartNew()
+			// 获取所有容器列表
+			containers, _ := dockerClient.Container.List("", nil)
 			// 发送消息
 			res := Res{
 				IsDockerMaster:      dockerInfo.Swarm.ControlAvailable,
 				DockerEngineVersion: dockerInfo.ServerVersion,
 				Host:                system.GetResource("/", "/home"),
-				Dockers:             dockerClient.Stats(),
+				Dockers:             dockerClient.Stats(containers),
 				Availability:        dockerInfo.Swarm.LocalNodeState,
 				Role:                "Worker",
 			}
