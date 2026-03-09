@@ -25,9 +25,6 @@ func main() {
 	dockerInfo := containerMgr.Client.GetInfo() // 获取docker版本
 	flog.Infof("当前容器版本: %s", dockerInfo.ServerVersion)
 
-	// 持续上传系统资源
-	go getResource(cfg.FopsWsServer, dockerInfo, containerMgr)
-
 	// 如果启用了docker
 	if dockerInfo.ServerVersion != "" {
 		// 监听docker事件,用以发送消息到fops
@@ -64,6 +61,9 @@ func main() {
 
 		containerMgr.GetAllContainers()
 	}
+
+	// 持续上传系统资源
+	go getResource(cfg.FopsWsServer, dockerInfo, containerMgr)
 
 	webapi.UsePprof()
 	webapi.Run(":8890")
