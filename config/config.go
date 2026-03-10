@@ -64,9 +64,9 @@ func Load() *Config {
 
 	// 转成http url
 	if strings.HasPrefix(cfg.FopsWsServer, "wss://") {
-		cfg.FopsHttpServer = "https://" + cfg.FopsWsServer[6:] + "/linkTrace/upload"
+		cfg.FopsHttpServer = "https://" + cfg.FopsWsServer[6:]
 	} else if strings.HasPrefix(cfg.FopsWsServer, "ws://") {
-		cfg.FopsHttpServer = "http://" + cfg.FopsWsServer[5:] + "/linkTrace/upload"
+		cfg.FopsHttpServer = "http://" + cfg.FopsWsServer[5:]
 	}
 
 	if cfg.FopsHttpServer == "" {
