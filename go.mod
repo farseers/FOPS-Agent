@@ -10,12 +10,12 @@ require (
 	github.com/farseer-go/fs v0.17.3
 	github.com/farseer-go/monitor v0.17.3
 	github.com/farseer-go/utils v0.17.3
+	github.com/farseer-go/webapi v0.17.3
+	github.com/fsnotify/fsnotify v1.9.0
 )
 
 require (
 	github.com/ebitengine/purego v0.10.0 // indirect
-	github.com/farseer-go/webapi v0.17.3 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/gabriel-vasile/mimetype v1.4.13 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect

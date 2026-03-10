@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fops-agent/collector"
 	"fops-agent/config"
 	"fops-agent/container"
@@ -42,11 +41,8 @@ func main() {
 		// 订阅容器变化
 		containerMgr.Subscribe(fileWatcherMgr)
 
-		// 创建上下文
-		ctx, _ := context.WithCancel(context.Background())
-
 		// 启动容器管理器
-		if err := containerMgr.Start(ctx); err != nil {
+		if err := containerMgr.Start(fs.Context); err != nil {
 			flog.Warningf("启动容器管理器失败: %v", err)
 			return
 		}
