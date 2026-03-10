@@ -36,8 +36,8 @@ func main() {
 			return
 		}
 
-		// 创建文件监视器管理器（订阅容器事件）
-		fileWatcherMgr := watcher.NewFileWatcherManager(cfg, store)
+		// 创建监视器管理器（订阅容器事件）
+		fileWatcherMgr := watcher.NewWatcherManager(cfg, store)
 
 		// 订阅容器变化
 		containerMgr.Subscribe(fileWatcherMgr)
@@ -53,7 +53,6 @@ func main() {
 
 		flog.Infof("FOPS-Agent 已启动，监视 %d 个容器", fileWatcherMgr.GetWatcherCount())
 	}
-	containerMgr.GetAllStats()
 	// 持续上传系统资源
 	go getResource(cfg.FopsWsServer, dockerInfo, containerMgr)
 

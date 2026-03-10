@@ -22,8 +22,8 @@ type WatcherManager struct {
 	watchers sync.Map                 // containerID -> *ContainerWatcher
 }
 
-// NewFileWatcherManager 创建文件监视器管理器
-func NewFileWatcherManager(cfg *config.Config, store *collector.FileStore) *WatcherManager {
+// NewWatcherManager 创建文件监视器管理器
+func NewWatcherManager(cfg *config.Config, store *collector.FileStore) *WatcherManager {
 	m := &WatcherManager{
 		cfg:     cfg,
 		store:   store,
@@ -32,8 +32,7 @@ func NewFileWatcherManager(cfg *config.Config, store *collector.FileStore) *Watc
 
 	// 预创建全局上传器（每个 collector 一个）
 	for _, cc := range cfg.Collectors {
-		up := uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB)
-		m.outputs[cc.Name] = up
+		m.outputs[cc.Name] = uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB)
 	}
 
 	// 启动所有上传器
