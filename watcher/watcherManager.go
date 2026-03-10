@@ -13,9 +13,9 @@ import (
 	"github.com/farseer-go/fs/flog"
 )
 
-// FileWatcherManager 文件监视器管理器
+// WatcherManager 文件监视器管理器
 // 订阅容器事件，管理每个容器的文件监视器
-type FileWatcherManager struct {
+type WatcherManager struct {
 	cfg      *config.Config
 	store    *collector.FileStore
 	outputs  map[string]output.Output // collectorName -> Output（全局共享）
@@ -23,8 +23,8 @@ type FileWatcherManager struct {
 }
 
 // NewFileWatcherManager 创建文件监视器管理器
-func NewFileWatcherManager(cfg *config.Config, store *collector.FileStore) *FileWatcherManager {
-	m := &FileWatcherManager{
+func NewFileWatcherManager(cfg *config.Config, store *collector.FileStore) *WatcherManager {
+	m := &WatcherManager{
 		cfg:     cfg,
 		store:   store,
 		outputs: make(map[string]output.Output),
@@ -47,12 +47,12 @@ func NewFileWatcherManager(cfg *config.Config, store *collector.FileStore) *File
 }
 
 // GetOutput 获取指定 collector 的输出器
-func (m *FileWatcherManager) GetOutput(collectorName string) output.Output {
+func (m *WatcherManager) GetOutput(collectorName string) output.Output {
 	return m.outputs[collectorName]
 }
 
 // OnContainerAdd 容器新增事件（实现 container.Observer 接口）
-func (m *FileWatcherManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
+func (m *WatcherManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 	containerName := parseContainerName(c.Name)
 	if m.cfg.ShouldIgnore(containerName) {
 		flog.Debugf("[FileWatcher] 忽略容器: %s", containerName)
@@ -78,7 +78,7 @@ func (m *FileWatcherManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 }
 
 // OnContainerRemove 容器删除事件（实现 container.Observer 接口）
-func (m *FileWatcherManager) OnContainerRemove(containerID string) {
+func (m *WatcherManager) OnContainerRemove(containerID string) {
 	val, ok := m.watchers.Load(containerID)
 	if !ok {
 		return
@@ -91,7 +91,7 @@ func (m *FileWatcherManager) OnContainerRemove(containerID string) {
 }
 
 // Stop 停止所有监视器
-func (m *FileWatcherManager) Stop() {
+func (m *WatcherManager) Stop() {
 	m.watchers.Range(func(key, value interface{}) bool {
 		value.(*ContainerWatcher).Stop()
 		return true
@@ -106,7 +106,7 @@ func (m *FileWatcherManager) Stop() {
 }
 
 // GetWatcherCount 获取监视器数量
-func (m *FileWatcherManager) GetWatcherCount() int {
+func (m *WatcherManager) GetWatcherCount() int {
 	count := 0
 	m.watchers.Range(func(key, value interface{}) bool {
 		count++

@@ -23,16 +23,12 @@ type Data struct {
 type Output interface {
 	// Name 输出器名称
 	Name() string
-
 	// Start 启动输出器
 	Start() error
-
 	// Stop 停止输出器
 	Stop()
-
 	// Write 写入数据
 	Write(data *Data)
-
 	// RegisterCallback 注册回调（collectorName -> callback）
 	RegisterCallback(collectorName string, callback func(filePath string))
 }

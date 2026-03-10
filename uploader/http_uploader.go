@@ -34,63 +34,6 @@ type HTTPUploader struct {
 	wg     sync.WaitGroup
 }
 
-// bufferQueue 缓冲队列
-type bufferQueue struct {
-	mu        sync.Mutex
-	data      []string          // 存储每行数据
-	fileInfos map[string]string // filePath -> collectorName
-	size      int64             // 当前数据大小（字节）
-	maxSize   int64             // 最大大小（字节）
-}
-
-// NewBufferQueue 创建缓冲队列
-func NewBufferQueue(maxSizeMB int) *bufferQueue {
-	return &bufferQueue{
-		data:      make([]string, 0),
-		fileInfos: make(map[string]string),
-		maxSize:   int64(maxSizeMB) * 1024 * 1024,
-	}
-}
-
-// Add 添加数据
-func (q *bufferQueue) Add(lines []string, filePath string, collectorName string) int64 {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	var size int64
-	for _, line := range lines {
-		q.data = append(q.data, line)
-		size += int64(len(line))
-	}
-	q.fileInfos[filePath] = collectorName
-	q.size += size
-
-	return q.size
-}
-
-// GetAndClear 获取数据并清空
-func (q *bufferQueue) GetAndClear() ([]string, map[string]string, int64) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	data := q.data
-	fileInfos := q.fileInfos
-	size := q.size
-
-	q.data = make([]string, 0)
-	q.fileInfos = make(map[string]string)
-	q.size = 0
-
-	return data, fileInfos, size
-}
-
-// IsEmpty 是否为空
-func (q *bufferQueue) IsEmpty() bool {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return len(q.data) == 0
-}
-
 // NewHTTPUploader 创建 HTTP 上传器
 func NewHTTPUploader(name string, uploadURL string, httpServerURL string, uploadInterval int, bufferSizeMB int) *HTTPUploader {
 	transport := &http.Transport{
@@ -129,8 +72,7 @@ func (u *HTTPUploader) Start() error {
 	u.wg.Add(1)
 	go u.uploadLoop()
 
-	flog.Infof("[HTTPUploader:%s] 启动，上传地址: %s，间隔: %ds，缓冲: %dMB",
-		u.name, u.uploadURL, u.uploadInterval, u.bufferSizeMB)
+	flog.Infof("[HTTPUploader:%s] 启动，上传地址: %s，间隔: %ds，缓冲: %dMB", u.name, u.uploadURL, u.uploadInterval, u.bufferSizeMB)
 
 	return nil
 }
@@ -189,6 +131,7 @@ func (u *HTTPUploader) flush() {
 		return
 	}
 
+	// 获取缓冲区数据并清空
 	data, fileInfos, size := u.buffer.GetAndClear()
 	if len(data) == 0 {
 		return
@@ -247,7 +190,6 @@ func (u *HTTPUploader) upload(body []byte) error {
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-
 	resp, err := u.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("请求失败: %w", err)

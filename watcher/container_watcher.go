@@ -27,7 +27,7 @@ type ContainerWatcher struct {
 }
 
 // NewContainerWatcher 创建容器文件监视器
-func NewContainerWatcher(containerID, containerName string, pid int, cfg *config.Config, store *collector.FileStore, manager *FileWatcherManager) (*ContainerWatcher, error) {
+func NewContainerWatcher(containerID, containerName string, pid int, cfg *config.Config, store *collector.FileStore, manager *WatcherManager) (*ContainerWatcher, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &ContainerWatcher{
 		containerID:   containerID,
