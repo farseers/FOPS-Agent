@@ -13,18 +13,18 @@ import (
 	"github.com/farseer-go/fs/flog"
 )
 
-// WatcherManager 文件监视器管理器
+// CollectorManager 文件监视器管理器
 // 订阅容器事件，管理每个容器的文件监视器
-type WatcherManager struct {
+type CollectorManager struct {
 	cfg      *config.Config
 	store    *collector.FileStore
 	outputs  map[string]output.Output // collectorName -> Output（全局共享）
-	watchers sync.Map                 // containerID -> *ContainerWatcher
+	watchers sync.Map                 // containerID -> *ContainerCollector
 }
 
-// NewWatcherManager 创建文件监视器管理器
-func NewWatcherManager(cfg *config.Config, store *collector.FileStore) *WatcherManager {
-	m := &WatcherManager{
+// NewCollectorManager 创建文件监视器管理器
+func NewCollectorManager(cfg *config.Config, store *collector.FileStore) *CollectorManager {
+	m := &CollectorManager{
 		cfg:     cfg,
 		store:   store,
 		outputs: make(map[string]output.Output),
@@ -38,20 +38,15 @@ func NewWatcherManager(cfg *config.Config, store *collector.FileStore) *WatcherM
 	// 启动所有上传器
 	for _, out := range m.outputs {
 		if err := out.Start(); err != nil {
-			flog.Errorf("[FileWatcherManager] 启动上传器失败: %v", err)
+			flog.Errorf("[FileCollectorManager] 启动上传器失败: %v", err)
 		}
 	}
 
 	return m
 }
 
-// GetOutput 获取指定 collector 的输出器
-func (m *WatcherManager) GetOutput(collectorName string) output.Output {
-	return m.outputs[collectorName]
-}
-
 // OnContainerAdd 容器新增事件（实现 container.Observer 接口）
-func (m *WatcherManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
+func (m *CollectorManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 	containerName := parseContainerName(c.Name)
 	if m.cfg.ShouldIgnore(containerName) {
 		flog.Debugf("[FileWatcher] 忽略容器: %s", containerName)
@@ -64,7 +59,7 @@ func (m *WatcherManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 	if _, ok := m.watchers.Load(c.ID); ok {
 		return
 	}
-	w, err := NewContainerWatcher(c.ID, containerName, c.State.Pid, m.cfg, m.store, m)
+	w, err := NewContainerCollector(c.ID, containerName, c.State.Pid, m.cfg, m.store, m.outputs)
 	if err != nil {
 		flog.Errorf("[FileWatcher] 创建监视器失败: %v", err)
 		return
@@ -77,12 +72,12 @@ func (m *WatcherManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 }
 
 // OnContainerRemove 容器删除事件（实现 container.Observer 接口）
-func (m *WatcherManager) OnContainerRemove(containerID string) {
+func (m *CollectorManager) OnContainerRemove(containerID string) {
 	val, ok := m.watchers.Load(containerID)
 	if !ok {
 		return
 	}
-	w := val.(*ContainerWatcher)
+	w := val.(*ContainerCollector)
 	w.Stop()
 	m.store.DeleteByContainer(containerID)
 	m.watchers.Delete(containerID)
@@ -90,9 +85,9 @@ func (m *WatcherManager) OnContainerRemove(containerID string) {
 }
 
 // Stop 停止所有监视器
-func (m *WatcherManager) Stop() {
+func (m *CollectorManager) Stop() {
 	m.watchers.Range(func(key, value interface{}) bool {
-		value.(*ContainerWatcher).Stop()
+		value.(*ContainerCollector).Stop()
 		return true
 	})
 
@@ -105,7 +100,7 @@ func (m *WatcherManager) Stop() {
 }
 
 // GetWatcherCount 获取监视器数量
-func (m *WatcherManager) GetWatcherCount() int {
+func (m *CollectorManager) GetWatcherCount() int {
 	count := 0
 	m.watchers.Range(func(key, value interface{}) bool {
 		count++

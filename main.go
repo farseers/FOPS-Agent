@@ -37,7 +37,7 @@ func main() {
 		}
 
 		// 创建监视器管理器（订阅容器事件）
-		fileWatcherMgr := watcher.NewWatcherManager(cfg, store)
+		fileWatcherMgr := watcher.NewCollectorManager(cfg, store)
 
 		// 订阅容器变化
 		containerMgr.Subscribe(fileWatcherMgr)

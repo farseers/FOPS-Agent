@@ -10,12 +10,13 @@ import (
 
 	"fops-agent/collector"
 	"fops-agent/config"
+	"fops-agent/output"
 
 	"github.com/farseer-go/fs/flog"
 )
 
-// ContainerWatcher 容器文件监视器
-type ContainerWatcher struct {
+// ContainerCollector 容器文件监视器
+type ContainerCollector struct {
 	containerID   string
 	containerName string
 	pid           int
@@ -26,10 +27,10 @@ type ContainerWatcher struct {
 	wg            sync.WaitGroup
 }
 
-// NewContainerWatcher 创建容器文件监视器
-func NewContainerWatcher(containerID, containerName string, pid int, cfg *config.Config, store *collector.FileStore, manager *WatcherManager) (*ContainerWatcher, error) {
+// NewContainerCollector 创建容器文件监视器
+func NewContainerCollector(containerID, containerName string, pid int, cfg *config.Config, store *collector.FileStore, outputs map[string]output.Output) (*ContainerCollector, error) {
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &ContainerWatcher{
+	w := &ContainerCollector{
 		containerID:   containerID,
 		containerName: containerName,
 		pid:           pid,
@@ -40,10 +41,10 @@ func NewContainerWatcher(containerID, containerName string, pid int, cfg *config
 	if appName := w.detectAppName(cfg); appName != "" {
 		w.appName = appName
 	}
-	flog.Infof("[ContainerWatcher] 创建: %s, PID: %d, 应用: %s", containerName, pid, w.appName)
+	flog.Infof("[ContainerCollector] 创建: %s, PID: %d, 应用: %s", containerName, pid, w.appName)
 	for _, cc := range cfg.Collectors {
 		// 使用全局上传器
-		out := manager.GetOutput(cc.Name)
+		out := outputs[cc.Name]
 		col := collector.NewFileCollector(cc.Name, containerID, containerName, w.appName, cc.WatchDir, cc.FileExt, pid, store, out)
 		w.collectors = append(w.collectors, col)
 
@@ -58,7 +59,7 @@ func NewContainerWatcher(containerID, containerName string, pid int, cfg *config
 }
 
 // detectAppName 从目录检测应用名称
-func (w *ContainerWatcher) detectAppName(cfg *config.Config) string {
+func (w *ContainerCollector) detectAppName(cfg *config.Config) string {
 	for _, cc := range cfg.Collectors {
 		if !strings.Contains(cc.WatchDir, "{app}") {
 			continue
@@ -79,26 +80,26 @@ func (w *ContainerWatcher) detectAppName(cfg *config.Config) string {
 }
 
 // Start 启动容器监视器
-func (w *ContainerWatcher) Start() error {
+func (w *ContainerCollector) Start() error {
 	for _, col := range w.collectors {
 		if err := col.Start(w.ctx); err != nil {
-			flog.Warningf("[ContainerWatcher] 启动采集器 %s 失败: %v", col.Name(), err)
+			flog.Warningf("[ContainerCollector] 启动采集器 %s 失败: %v", col.Name(), err)
 		}
 	}
 	return nil
 }
 
 // Stop 停止容器监视器
-func (w *ContainerWatcher) Stop() {
+func (w *ContainerCollector) Stop() {
 	w.cancel()
 	for _, col := range w.collectors {
 		col.Stop()
 	}
 	w.wg.Wait()
-	flog.Infof("[ContainerWatcher] 已停止: %s", w.containerName)
+	flog.Infof("[ContainerCollector] 已停止: %s", w.containerName)
 }
 
 // ContainerID 获取容器ID
-func (w *ContainerWatcher) ContainerID() string {
+func (w *ContainerCollector) ContainerID() string {
 	return w.containerID
 }

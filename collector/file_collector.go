@@ -104,7 +104,7 @@ func (c *FileCollector) Name() string {
 func (c *FileCollector) Start(ctx context.Context) error {
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
-	// output 由 FileWatcherManager 统一管理，这里不再启动
+	// output 由 FileCollectorManager 统一管理，这里不再启动
 
 	// 构建实际监听路径：/proc/PID/root/watchDir
 	actualPath := c.getActualPath()
@@ -148,7 +148,7 @@ func (c *FileCollector) Stop() {
 	if c.watcher != nil {
 		c.watcher.Close()
 	}
-	// output 由 FileWatcherManager 统一管理，这里不再停止
+	// output 由 FileCollectorManager 统一管理，这里不再停止
 }
 
 // getActualPath 获取实际监听路径
