@@ -71,7 +71,6 @@ func (w *ContainerWatcher) detectAppName(cfg *config.Config) string {
 		}
 		for _, entry := range entries {
 			if entry.IsDir() {
-				flog.Debugf("[ContainerWatcher] 检测到应用名: %s", entry.Name())
 				return entry.Name()
 			}
 		}
@@ -86,7 +85,6 @@ func (w *ContainerWatcher) Start() error {
 			flog.Warningf("[ContainerWatcher] 启动采集器 %s 失败: %v", col.Name(), err)
 		}
 	}
-	flog.Infof("[ContainerWatcher] 已启动: %s", w.containerName)
 	return nil
 }
 

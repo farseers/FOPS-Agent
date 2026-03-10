@@ -199,7 +199,7 @@ func (u *HTTPUploader) flush() {
 
 	// 上传
 	if err := u.upload(body); err != nil {
-		flog.Errorf("[HTTPUploader:%s] 上传失败 %d 行数据: %v", u.name, len(data), err)
+		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据: %v", u.name, len(data), err)
 		return
 	}
 

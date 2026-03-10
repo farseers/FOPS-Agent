@@ -28,6 +28,8 @@ type ContainerConfig struct {
 	OffsetDir string `yaml:"OffsetDir"`
 	// IgnoreNames 忽略的容器名称（前缀匹配）
 	IgnoreNames []string `yaml:"IgnoreNames"`
+	// StatsInterval 资源收集间隔（秒）
+	StatsInterval int `yaml:"StatsInterval"`
 }
 
 // CollectorConfig 采集器配置
@@ -62,9 +64,9 @@ func Load() *Config {
 
 	// 转成http url
 	if strings.HasPrefix(cfg.FopsWsServer, "wss://") {
-		cfg.FopsHttpServer = "https://" + cfg.FopsWsServer[6:]
+		cfg.FopsHttpServer = "https://" + cfg.FopsWsServer[6:] + "/linkTrace/upload"
 	} else if strings.HasPrefix(cfg.FopsWsServer, "ws://") {
-		cfg.FopsHttpServer = "http://" + cfg.FopsWsServer[5:]
+		cfg.FopsHttpServer = "http://" + cfg.FopsWsServer[5:] + "/linkTrace/upload"
 	}
 
 	if cfg.FopsHttpServer == "" {
@@ -74,6 +76,9 @@ func Load() *Config {
 	// 设置默认值
 	if cfg.Container.OffsetDir == "" {
 		cfg.Container.OffsetDir = "/var/lib/fops-agent/offset"
+	}
+	if cfg.Container.StatsInterval == 0 {
+		cfg.Container.StatsInterval = 3
 	}
 
 	// 设置采集器默认值

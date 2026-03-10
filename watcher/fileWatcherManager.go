@@ -34,7 +34,6 @@ func NewFileWatcherManager(cfg *config.Config, store *collector.FileStore) *File
 	for _, cc := range cfg.Collectors {
 		up := uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB)
 		m.outputs[cc.Name] = up
-		flog.Infof("[FileWatcherManager] 创建全局上传器: %s -> %s", cc.Name, cc.UploadURL)
 	}
 
 	// 启动所有上传器
@@ -76,7 +75,6 @@ func (m *FileWatcherManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 		return
 	}
 	m.watchers.Store(c.ID, w)
-	flog.Infof("[FileWatcher] 已添加: %s (%s)", containerName, c.ID[:12])
 }
 
 // OnContainerRemove 容器删除事件（实现 container.Observer 接口）

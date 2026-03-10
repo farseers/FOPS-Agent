@@ -21,7 +21,7 @@ func main() {
 	cfg := config.Load()
 
 	// 创建容器管理器
-	containerMgr := container.NewManager()
+	containerMgr := container.NewManager(cfg.Container.StatsInterval)
 	dockerInfo := containerMgr.Client.GetInfo() // 获取docker版本
 	flog.Infof("当前容器版本: %s", dockerInfo.ServerVersion)
 
@@ -52,16 +52,8 @@ func main() {
 		}
 
 		flog.Infof("FOPS-Agent 已启动，监视 %d 个容器", fileWatcherMgr.GetWatcherCount())
-
-		// 启动时,先打印一遍当前所有容器的资源情况
-		for _, item := range containerMgr.GetAllContainers() {
-			dockerStatsVO := containerMgr.Client.Container.Stats(item.ID)
-			flog.Infof("容器: %s, CPU使用率: %.2f%%, 内存使用: %dMB", dockerStatsVO.ContainerName, dockerStatsVO.CpuUsagePercent, dockerStatsVO.MemoryUsage)
-		}
-
-		containerMgr.GetAllContainers()
 	}
-
+	containerMgr.GetAllStats()
 	// 持续上传系统资源
 	go getResource(cfg.FopsWsServer, dockerInfo, containerMgr)
 

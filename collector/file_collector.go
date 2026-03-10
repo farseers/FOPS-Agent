@@ -121,9 +121,6 @@ func (c *FileCollector) Start(ctx context.Context) error {
 	}
 	c.watcher = watcher
 
-	// 启动时扫描已有文件
-	c.scanExistingFiles(actualPath)
-
 	// 添加目录监听
 	if err := watcher.Add(actualPath); err != nil {
 		watcher.Close()
@@ -131,6 +128,9 @@ func (c *FileCollector) Start(ctx context.Context) error {
 	}
 
 	flog.Infof("[%s:%s] 开始监听目录: %s", c.containerName, c.name, actualPath)
+
+	// 启动时扫描已有文件
+	c.scanExistingFiles(actualPath)
 
 	// 启动事件处理协程
 	c.wg.Add(1)
@@ -209,6 +209,9 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 	// 最新的文件是当前写入的文件
 	currentFilePath := fileInfos[len(fileInfos)-1].path
 
+	flog.Infof("[%s:%s] 扫描到 %d 个文件，当前: %s",
+		c.containerName, c.name, len(fileInfos), filepath.Base(currentFilePath))
+
 	// 处理所有文件
 	for _, fi := range fileInfos {
 		isCurrent := fi.path == currentFilePath
@@ -246,9 +249,6 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 		// 读取文件内容
 		c.readFile(state, isCurrent)
 	}
-
-	flog.Infof("[%s:%s] 扫描到 %d 个文件，当前: %s",
-		c.containerName, c.name, len(fileInfos), filepath.Base(currentFilePath))
 }
 
 // handleEvents 处理 fsnotify 事件
