@@ -10,7 +10,7 @@ Container:
     - "portainer-ce"
     - "registry"
     - "traefik"
-    - "FOPS-AutoBuild"
+    - "FOPS-"
 
 # 采集器配置
 Collectors:
