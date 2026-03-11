@@ -500,8 +500,10 @@ func (c *FileCollector) tryDeletePendingFiles() {
 
 		// 删除文件
 		if err := os.Remove(filePath); err != nil {
-			flog.Warningf("[%s:%s] 删除文件失败: %v", c.containerName, c.name, err)
-			continue
+			if !strings.Contains(err.Error(), "no such file") {
+				flog.Warningf("[%s:%s] 删除文件失败: %v", c.containerName, c.name, err)
+				continue
+			}
 		}
 
 		// 删除偏移量记录
