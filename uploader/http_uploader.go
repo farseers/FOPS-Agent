@@ -29,6 +29,9 @@ type HTTPUploader struct {
 	callbacks map[string]func(filePath string) // collectorName -> callback
 	cbMu      sync.RWMutex
 
+	lastFailTime time.Time // 上次上传失败时间
+	failMu       sync.RWMutex
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -94,9 +97,16 @@ func (u *HTTPUploader) Stop() {
 func (u *HTTPUploader) Write(data *output.Data) {
 	size := u.buffer.Add(data.Lines, data.FilePath, data.CollectorName)
 
-	// 如果超过缓冲区大小，立即触发上传
+	// 如果超过缓冲区大小，检查是否可以上传
 	if size >= int64(u.bufferSizeMB)*1024*1024 {
-		go u.flush()
+		// 检查上次失败后是否已过5秒
+		u.failMu.RLock()
+		lastFail := u.lastFailTime
+		u.failMu.RUnlock()
+
+		if time.Since(lastFail) >= 5*time.Second {
+			go u.flush()
+		}
 	}
 }
 
@@ -143,6 +153,10 @@ func (u *HTTPUploader) flush() {
 	// 上传
 	if err := u.upload(body); err != nil {
 		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据: %v", u.name, len(data), err)
+		// 记录失败时间，触发5秒冷却期
+		u.failMu.Lock()
+		u.lastFailTime = time.Now()
+		u.failMu.Unlock()
 		return
 	}
 
