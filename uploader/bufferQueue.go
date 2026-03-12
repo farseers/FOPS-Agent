@@ -60,3 +60,16 @@ func (q *bufferQueue) IsEmpty() bool {
 	defer q.mu.Unlock()
 	return len(q.data) == 0
 }
+
+// PutBack 将数据放回队列头部（用于上传失败时恢复数据）
+func (q *bufferQueue) PutBack(data []string, fileInfos map[string]string, size int64) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	// 将失败的数据放回队列头部，确保优先重试
+	q.data = append(data, q.data...)
+	for k, v := range fileInfos {
+		q.fileInfos[k] = v
+	}
+	q.size += size
+}

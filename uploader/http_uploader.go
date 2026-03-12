@@ -153,6 +153,10 @@ func (u *HTTPUploader) flush() {
 	// 上传
 	if err := u.upload(body); err != nil {
 		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据: %v", u.name, len(data), err)
+
+		// 将数据放回缓冲区，避免数据丢失
+		u.buffer.PutBack(data, fileInfos, size)
+
 		// 记录失败时间，触发5秒冷却期
 		u.failMu.Lock()
 		u.lastFailTime = time.Now()
