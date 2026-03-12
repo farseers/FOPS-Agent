@@ -32,6 +32,9 @@ type HTTPUploader struct {
 	lastFailTime time.Time // 上次上传失败时间
 	failMu       sync.RWMutex
 
+	flushing bool       // 是否正在刷新
+	flushMu  sync.Mutex // 保护 flushing 标志
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -137,6 +140,22 @@ func (u *HTTPUploader) uploadLoop() {
 
 // flush 刷新缓冲区
 func (u *HTTPUploader) flush() {
+	// 检查是否已经在刷新，避免并发调用
+	u.flushMu.Lock()
+	if u.flushing {
+		u.flushMu.Unlock()
+		return
+	}
+	u.flushing = true
+	u.flushMu.Unlock()
+
+	// 确保在函数结束时清除 flushing 标志
+	defer func() {
+		u.flushMu.Lock()
+		u.flushing = false
+		u.flushMu.Unlock()
+	}()
+
 	if u.buffer.IsEmpty() {
 		return
 	}
