@@ -111,7 +111,9 @@ func (c *FileCollector) Start(ctx context.Context) error {
 
 	// 检查目录是否存在
 	if _, err := os.Stat(actualPath); os.IsNotExist(err) {
-		return fmt.Errorf("监听目录不存在: %s", actualPath)
+		if err = os.MkdirAll(actualPath, 0755); err != nil {
+			return fmt.Errorf("监听目录不存在: %s,尝试创建后仍然失败:%s", actualPath, err.Error())
+		}
 	}
 
 	// 创建 fsnotify watcher
