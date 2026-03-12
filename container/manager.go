@@ -82,12 +82,12 @@ func (m *Manager) Handle(event docker.EventResult) {
 			return
 		}
 		if inspect.ID != "" {
-			flog.Infof("[ContainerManager] 容器新增: %s (%s)", parseContainerName(inspect.Name), inspect.ID[:12])
+			flog.Infof("[ContainerManager] 发现新容器: %s (%s)", parseContainerName(inspect.Name), inspect.ID[:12])
 			m.notifyAdd(inspect)
 		}
 	case "die", "destroy":
 		if c, ok := m.GetContainer(containerID); ok {
-			flog.Infof("[ContainerManager] 容器移除: %s (%s)", parseContainerName(c.Name), containerID[:12])
+			flog.Infof("[ContainerManager] 移除容器: %s (%s)", parseContainerName(c.Name), containerID[:12])
 			m.notifyRemove(containerID)
 		}
 	}
