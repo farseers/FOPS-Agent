@@ -91,40 +91,29 @@ func (c *FileCollector) Name() string {
 
 // Start 启动采集器 (通过 Docker event 触发的，只会被调用一次)
 func (c *FileCollector) Start(ctx context.Context) {
+	// 先等30秒,等应用启动完毕
+	t := time.NewTicker(30 * time.Second)
 	c.ctx, c.cancel = context.WithCancel(ctx)
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		default:
+		case <-t.C:
 			// 1. 获取应用名称
 			var actualPath string
 			actualPath, c.appName = c.detectAppName()
-
-			// 2. 如果父目录存在但应用名称为空,监控父目录等待子目录创建
-			if actualPath != "" && c.appName == "" {
-				flog.Infof("[%s:%s] 父目录存在但应用目录未创建,开始监控父目录: %s", c.containerName, c.name, actualPath)
-				c.appName = c.waitForAppDirectory(actualPath)
-			}
-
-			// 3. 如果应用名称仍为空,说明父目录也不存在,稍后重试
 			if c.appName == "" {
-				flog.Warningf("[%s:%s] 无法获取应用名称,10秒后重试", c.containerName, c.name)
-				time.Sleep(10 * time.Second)
 				continue
 			}
 
-			// 4. 构建实际监听路径：/proc/1000/root//var/log/linkTrace/应用名称/
+			// 2. 构建实际监听路径：/proc/1000/root//var/log/linkTrace/应用名称/
 			actualPath = filepath.Join(actualPath, c.appName)
 
-			// 5. 尝试启动监控
+			// 3. 尝试启动监控
 			if c.startWatching(actualPath) {
 				return // 成功启动
 			}
-
-			// 启动失败,稍后重试
-			time.Sleep(10 * time.Second)
 		}
 	}
 }
@@ -162,76 +151,6 @@ func (c *FileCollector) startWatching(actualPath string) bool {
 	go c.handleEvents()
 
 	return true
-}
-
-// waitForAppDirectory 监控父目录,等待应用子目录创建
-func (c *FileCollector) waitForAppDirectory(parentPath string) string {
-	// 确保父目录存在
-	if _, err := os.Stat(parentPath); os.IsNotExist(err) {
-		if err := os.MkdirAll(parentPath, 0755); err != nil {
-			flog.Warningf("[%s:%s] 创建父目录失败: %s, %v", c.containerName, c.name, parentPath, err)
-			return ""
-		}
-		flog.Infof("[%s:%s] 创建父目录: %s", c.containerName, c.name, parentPath)
-	}
-
-	// 先检查是否已经存在子目录
-	entries, err := os.ReadDir(parentPath)
-	if err == nil {
-		for _, entry := range entries {
-			if entry.IsDir() {
-				return entry.Name()
-			}
-		}
-	}
-
-	// 创建 fsnotify watcher 监控父目录
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		flog.Warningf("[%s:%s] 创建父目录监控失败: %v", c.containerName, c.name, err)
-		return ""
-	}
-	defer watcher.Close()
-
-	if err := watcher.Add(parentPath); err != nil {
-		flog.Warningf("[%s:%s] 添加父目录监控失败: %v", c.containerName, c.name, err)
-		return ""
-	}
-
-	flog.Infof("[%s:%s] 等待应用目录创建...", c.containerName, c.name)
-
-	// 监听事件
-	for {
-		select {
-		case <-c.ctx.Done():
-			return ""
-
-		case event, ok := <-watcher.Events:
-			if !ok {
-				return ""
-			}
-
-			// 只关注 Create 事件
-			if event.Op&fsnotify.Create == fsnotify.Create {
-				// 检查是否是目录
-				info, err := os.Stat(event.Name)
-				if err != nil {
-					continue
-				}
-
-				if info.IsDir() {
-					// 返回目录名称(不是完整路径)
-					return filepath.Base(event.Name)
-				}
-			}
-
-		case err, ok := <-watcher.Errors:
-			if !ok {
-				return ""
-			}
-			flog.Warningf("[%s:%s] 父目录监控错误: %v", c.containerName, c.name, err)
-		}
-	}
 }
 
 // Stop 停止采集器
