@@ -79,7 +79,6 @@ func (m *CollectorManager) OnContainerRemove(containerID string) {
 	w.Stop()
 	m.store.DeleteByContainer(containerID)
 	m.watchers.Delete(containerID)
-	flog.Infof("[FileWatcher] 已移除: %s", containerID[:12])
 }
 
 // Stop 停止所有监视器

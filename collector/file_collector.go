@@ -91,6 +91,11 @@ func (c *FileCollector) Name() string {
 
 // Start 启动采集器 (通过 Docker event 触发的，只会被调用一次)
 func (c *FileCollector) Start(ctx context.Context) {
+	// 尝试监听
+	if c.tryWatch() {
+		return
+	}
+
 	// 先等30秒,等应用启动完毕
 	t := time.NewTicker(30 * time.Second)
 	c.ctx, c.cancel = context.WithCancel(ctx)
@@ -100,22 +105,27 @@ func (c *FileCollector) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-t.C:
-			// 1. 获取应用名称
-			var actualPath string
-			actualPath, c.appName = c.detectAppName()
-			if c.appName == "" {
-				continue
-			}
-
-			// 2. 构建实际监听路径：/proc/1000/root//var/log/linkTrace/应用名称/
-			actualPath = filepath.Join(actualPath, c.appName)
-
-			// 3. 尝试启动监控
-			if c.startWatching(actualPath) {
-				return // 成功启动
+			if c.tryWatch() {
+				return
 			}
 		}
 	}
+}
+
+// 尝试监听
+func (c *FileCollector) tryWatch() bool {
+	// 1. 获取应用名称
+	var actualPath string
+	actualPath, c.appName = c.detectAppName()
+	if c.appName == "" {
+		return false
+	}
+
+	// 2. 构建实际监听路径：/proc/1000/root//var/log/linkTrace/应用名称/
+	actualPath = filepath.Join(actualPath, c.appName)
+
+	// 3. 尝试启动监控
+	return c.startWatching(actualPath)
 }
 
 // startWatching 启动目录监控
@@ -141,7 +151,7 @@ func (c *FileCollector) startWatching(actualPath string) bool {
 	}
 
 	c.watcher = watcher
-	flog.Infof("[%s:%s] 开始监听目录: %s", c.containerName, c.name, actualPath)
+	flog.Infof("[%s:%s] 监听目录: %s", c.containerName, c.name, actualPath)
 
 	// 启动时扫描已有文件
 	c.scanExistingFiles(actualPath)
@@ -247,17 +257,15 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 	})
 
 	// 最新的文件是当前写入的文件
-	currentFilePath := fileInfos[len(fileInfos)-1].path
+	c.currentFileMu.Lock()
+	c.currentFile = fileInfos[len(fileInfos)-1].path
+	c.currentFileMu.Unlock()
 
-	flog.Infof("[%s:%s] 扫描到 %d 个文件，当前: %s",
-		c.containerName, c.name, len(fileInfos), filepath.Base(currentFilePath))
+	flog.Infof("[%s:%s] 扫描到 %d 个文件，当前: %s", c.containerName, c.name, len(fileInfos), c.currentFile)
 
 	// 处理所有文件
 	for _, fi := range fileInfos {
-		isCurrent := fi.path == currentFilePath
-
-		// 获取偏移量
-		offset := c.store.Get(c.containerID, c.name, fi.path)
+		isCurrent := fi.path == c.currentFile
 
 		state := &fileState{
 			path:    fi.path,
@@ -266,6 +274,8 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 			status:  statusWriting,
 		}
 
+		// 获取偏移量
+		offset := c.store.Get(c.containerID, c.name, fi.path)
 		if offset != nil {
 			state.offset = offset.Offset
 			state.size = offset.FileSize
@@ -279,12 +289,6 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 		c.filesMu.Lock()
 		c.files[fi.path] = state
 		c.filesMu.Unlock()
-
-		if isCurrent {
-			c.currentFileMu.Lock()
-			c.currentFile = fi.path
-			c.currentFileMu.Unlock()
-		}
 
 		// 读取文件内容
 		c.readFile(state, isCurrent)
@@ -333,7 +337,7 @@ func (c *FileCollector) processEvent(event fsnotify.Event) {
 
 // handleFileCreate 处理文件创建事件
 func (c *FileCollector) handleFileCreate(filePath string) {
-	flog.Infof("[%s:%s] 新文件: %s", c.containerName, c.name, filepath.Base(filePath))
+	flog.Infof("[%s:%s] 新文件: %s", c.containerName, c.name, filePath)
 
 	// 标记上一个文件为已完结
 	c.currentFileMu.Lock()
@@ -363,16 +367,14 @@ func (c *FileCollector) handleFileCreate(filePath string) {
 		return
 	}
 
-	state := &fileState{
+	c.filesMu.Lock()
+	c.files[filePath] = &fileState{
 		path:    filePath,
 		size:    info.Size(),
 		modTime: info.ModTime(),
 		offset:  0,
 		status:  statusWriting,
 	}
-
-	c.filesMu.Lock()
-	c.files[filePath] = state
 	c.filesMu.Unlock()
 
 	// 检查是否有待删除的文件可以删除
@@ -386,8 +388,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	c.filesMu.RUnlock()
 
 	if !ok {
-		// 文件不在跟踪列表中，可能是新文件
-		flog.Warningf("文件不在跟踪列表中，可能是新文件: %s", filePath)
+		flog.Warningf("[%s:%s] 文件不在跟踪列表中，可能是新文件: %s", c.containerName, c.name, filePath)
 		return
 	}
 
