@@ -91,6 +91,7 @@ func (c *FileCollector) Name() string {
 
 // Start 启动采集器 (通过 Docker event 触发的，只会被调用一次)
 func (c *FileCollector) Start(ctx context.Context) {
+	c.ctx, c.cancel = context.WithCancel(ctx)
 	// 尝试监听
 	if c.tryWatch() {
 		return
@@ -98,7 +99,6 @@ func (c *FileCollector) Start(ctx context.Context) {
 
 	// 先等30秒,等应用启动完毕
 	t := time.NewTicker(30 * time.Second)
-	c.ctx, c.cancel = context.WithCancel(ctx)
 
 	for {
 		select {
@@ -213,7 +213,7 @@ func (c *FileCollector) getActualPath() string {
 func (c *FileCollector) scanExistingFiles(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		flog.Warningf("[%s:%s] 扫描目录失败: %v", c.containerName, c.name, err)
+		flog.Warningf("[%s:%s] 扫描目录%s失败: %v", c.containerName, c.name, dir, err)
 		return
 	}
 
@@ -231,12 +231,14 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 
 		// 检查文件扩展名
 		if !strings.HasSuffix(entry.Name(), "."+c.fileExt) {
+			flog.Warningf("[%s:%s] 检查文件扩展名: %s 不包含: %s", c.containerName, c.name, entry.Name(), c.fileExt)
 			continue
 		}
 
 		path := filepath.Join(dir, entry.Name())
 		info, err := entry.Info()
 		if err != nil {
+			flog.Warningf("[%s:%s] 查看文件%s详细失败: %v", c.containerName, c.name, entry.Name(), err)
 			continue
 		}
 
@@ -248,6 +250,7 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 	}
 
 	if len(fileInfos) == 0 {
+		flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, dir, len(fileInfos), c.currentFile)
 		return
 	}
 
@@ -261,7 +264,7 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 	c.currentFile = fileInfos[len(fileInfos)-1].path
 	c.currentFileMu.Unlock()
 
-	flog.Infof("[%s:%s] 扫描到 %d 个文件，当前: %s", c.containerName, c.name, len(fileInfos), c.currentFile)
+	flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, dir, len(fileInfos), c.currentFile)
 
 	// 处理所有文件
 	for _, fi := range fileInfos {
@@ -388,8 +391,8 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	c.filesMu.RUnlock()
 
 	if !ok {
-		flog.Warningf("[%s:%s] 文件不在跟踪列表中，可能是新文件: %s", c.containerName, c.name, filePath)
-		return
+		flog.Warningf("[%s:%s] 文件: %s, 不在跟踪列表中, 当前文件是: %s", c.containerName, c.name, filePath, c.currentFile)
+		//return
 	}
 
 	// 只处理当前写入的文件
@@ -398,7 +401,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	c.currentFileMu.Unlock()
 
 	if !isCurrent {
-		return
+		//return
 	}
 
 	// 获取最新文件信息
