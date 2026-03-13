@@ -64,10 +64,8 @@ func (m *CollectorManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 		flog.Errorf("[FileWatcher] 创建监视器失败: %v", err)
 		return
 	}
-	if err := w.Start(); err != nil {
-		flog.Errorf("[FileWatcher] 启动监视器失败: %v", err)
-		return
-	}
+
+	w.Start()
 	m.watchers.Store(c.ID, w)
 }
 

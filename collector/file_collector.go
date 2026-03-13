@@ -69,22 +69,11 @@ const (
 )
 
 // NewFileCollector 创建文件采集器
-func NewFileCollector(
-	name string,
-	containerID string,
-	containerName string,
-	appName string,
-	watchDir string,
-	fileExt string,
-	pid int,
-	store *FileStore,
-	out output.Output,
-) *FileCollector {
+func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, store *FileStore, out output.Output) *FileCollector {
 	return &FileCollector{
 		name:          name,
 		containerID:   containerID,
 		containerName: containerName,
-		appName:       appName,
 		watchDir:      watchDir,
 		fileExt:       fileExt,
 		pid:           pid,
@@ -101,44 +90,60 @@ func (c *FileCollector) Name() string {
 }
 
 // Start 启动采集器
-func (c *FileCollector) Start(ctx context.Context) error {
+func (c *FileCollector) Start(ctx context.Context) {
 	c.ctx, c.cancel = context.WithCancel(ctx)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+			// 读取应用名称
+			var actualPath string
+			actualPath, c.appName = c.detectAppName()
+			if c.appName == "" {
+				flog.Warning("监听目录不存在应用名称, 稍候在试")
+				time.Sleep(time.Minute)
+				continue
+			}
 
-	// output 由 FileCollectorManager 统一管理，这里不再启动
+			// 构建实际监听路径：/proc/1000/root//var/log/linkTrace/应用名称/
+			actualPath = filepath.Join(actualPath, c.appName)
 
-	// 构建实际监听路径：/proc/PID/root/watchDir
-	actualPath := c.getActualPath()
+			// 检查目录是否存在
+			if _, err := os.Stat(actualPath); os.IsNotExist(err) {
+				flog.Warningf("监听目录不存在: %s, 稍候在试", actualPath)
+				time.Sleep(time.Minute)
+				continue
+			}
 
-	// 检查目录是否存在
-	if _, err := os.Stat(actualPath); os.IsNotExist(err) {
-		if err = os.MkdirAll(actualPath, 0755); err != nil {
-			return fmt.Errorf("监听目录不存在: %s,尝试创建后仍然失败:%s", actualPath, err.Error())
+			// 创建 fsnotify watcher
+			watcher, err := fsnotify.NewWatcher()
+			if err != nil {
+				flog.Warningf("创建 fsnotify watcher 失败: %s, 稍候在试", err.Error())
+				time.Sleep(time.Minute)
+				continue
+			}
+			c.watcher = watcher
+
+			// 添加目录监听
+			if err := watcher.Add(actualPath); err != nil {
+				watcher.Close()
+				flog.Warningf("添加目录监听失败: %s", err.Error())
+				time.Sleep(time.Minute)
+				continue
+			}
+
+			flog.Infof("[%s:%s] 开始监听目录: %s", c.containerName, c.name, actualPath)
+
+			// 启动时扫描已有文件
+			c.scanExistingFiles(actualPath)
+
+			// 启动事件处理协程
+			c.wg.Add(1)
+			go c.handleEvents()
+			return
 		}
 	}
-
-	// 创建 fsnotify watcher
-	watcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return fmt.Errorf("创建 fsnotify watcher 失败: %w", err)
-	}
-	c.watcher = watcher
-
-	// 添加目录监听
-	if err := watcher.Add(actualPath); err != nil {
-		watcher.Close()
-		return fmt.Errorf("添加目录监听失败: %w", err)
-	}
-
-	flog.Infof("[%s:%s] 开始监听目录: %s", c.containerName, c.name, actualPath)
-
-	// 启动时扫描已有文件
-	c.scanExistingFiles(actualPath)
-
-	// 启动事件处理协程
-	c.wg.Add(1)
-	go c.handleEvents()
-
-	return nil
 }
 
 // Stop 停止采集器
@@ -150,7 +155,33 @@ func (c *FileCollector) Stop() {
 	if c.watcher != nil {
 		c.watcher.Close()
 	}
-	// output 由 FileCollectorManager 统一管理，这里不再停止
+}
+
+// detectAppName 从目录检测应用名称
+func (w *FileCollector) detectAppName() (string, string) {
+	// w.watchDir = /var/log/linkTrace/{app}/
+	if !strings.Contains(w.watchDir, "{app}") {
+		return "", ""
+	}
+
+	// parentDir = /var/log/linkTrace
+	parentDir := strings.TrimSuffix(filepath.Dir(strings.Replace(w.watchDir, "{app}/", "", -1)), "/")
+	// actualPath = /proc/1000/root//var/log/linkTrace
+	actualPath := filepath.Join(config.ProcPrefix, fmt.Sprintf("%d", w.pid), "root", parentDir)
+	// 读取目录
+	entries, err := os.ReadDir(actualPath)
+	if err != nil {
+		return actualPath, ""
+	}
+
+	// 返回第1个目录.(理论只会有1个目录存在)
+	for _, entry := range entries {
+		if entry.IsDir() {
+			return actualPath, entry.Name()
+		}
+	}
+
+	return actualPath, ""
 }
 
 // getActualPath 获取实际监听路径
@@ -349,6 +380,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 
 	if !ok {
 		// 文件不在跟踪列表中，可能是新文件
+		flog.Warningf("文件不在跟踪列表中，可能是新文件: %s", filePath)
 		return
 	}
 
