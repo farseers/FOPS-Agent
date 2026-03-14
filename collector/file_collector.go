@@ -24,7 +24,8 @@ type FileCollector struct {
 	containerID   string
 	containerName string
 	appName       string
-	watchDir      string
+	watchDir      string // 配置文件定义的目录
+	actualPath    string // 实际要监听的目录
 	fileExt       string
 	pid           int
 
@@ -38,7 +39,7 @@ type FileCollector struct {
 
 	// 当前写入的文件
 	currentFileMu sync.Mutex
-	currentFile   string
+	currentFile   string // 最新的的文件
 
 	// 待删除的文件（已输出成功，等待新文件出现后删除）
 	pendingDeleteMu sync.Mutex
@@ -60,6 +61,13 @@ type fileState struct {
 }
 
 type fileStatus int
+
+// 文件属性
+type fileInfo struct {
+	path    string    //路径
+	size    int64     // 大小
+	modTime time.Time // 修改时间
+}
 
 const (
 	statusWriting  fileStatus = iota // 正在写入
@@ -122,17 +130,17 @@ func (c *FileCollector) tryWatch() bool {
 	}
 
 	// 2. 构建实际监听路径：/proc/1000/root//var/log/linkTrace/应用名称/
-	actualPath = filepath.Join(actualPath, c.appName)
+	c.actualPath = filepath.Join(actualPath, c.appName)
 
 	// 3. 尝试启动监控
-	return c.startWatching(actualPath)
+	return c.startWatching()
 }
 
 // startWatching 启动目录监控
-func (c *FileCollector) startWatching(actualPath string) bool {
+func (c *FileCollector) startWatching() bool {
 	// 检查目录是否存在
-	if _, err := os.Stat(actualPath); os.IsNotExist(err) {
-		flog.Warningf("[%s:%s] 监听目录不存在: %s, 稍候再试", c.containerName, c.name, actualPath)
+	if _, err := os.Stat(c.actualPath); os.IsNotExist(err) {
+		flog.Warningf("[%s:%s] 监听目录不存在: %s, 稍候再试", c.containerName, c.name, c.actualPath)
 		return false
 	}
 
@@ -144,17 +152,17 @@ func (c *FileCollector) startWatching(actualPath string) bool {
 	}
 
 	// 添加目录监听
-	if err := watcher.Add(actualPath); err != nil {
+	if err := watcher.Add(c.actualPath); err != nil {
 		watcher.Close()
 		flog.Warningf("[%s:%s] 添加目录监听失败: %s, 稍候再试", c.containerName, c.name, err.Error())
 		return false
 	}
 
 	c.watcher = watcher
-	flog.Infof("[%s:%s] 监听目录: %s", c.containerName, c.name, actualPath)
+	flog.Infof("[%s:%s] 监听目录: %s", c.containerName, c.name, c.actualPath)
 
 	// 启动时扫描已有文件
-	c.scanExistingFiles(actualPath)
+	c.scanExistingFiles()
 
 	// 启动事件处理协程
 	c.wg.Add(1)
@@ -210,66 +218,24 @@ func (c *FileCollector) getActualPath() string {
 }
 
 // scanExistingFiles 扫描已有文件
-func (c *FileCollector) scanExistingFiles(dir string) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		flog.Warningf("[%s:%s] 扫描目录%s失败: %v", c.containerName, c.name, dir, err)
-		return
-	}
-
+func (c *FileCollector) scanExistingFiles() {
 	// 收集文件信息
-	var fileInfos []struct {
-		path    string
-		size    int64
-		modTime time.Time
-	}
-
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-
-		// 检查文件扩展名
-		if !strings.HasSuffix(entry.Name(), "."+c.fileExt) {
-			flog.Warningf("[%s:%s] 检查文件扩展名: %s 不包含: %s", c.containerName, c.name, entry.Name(), c.fileExt)
-			continue
-		}
-
-		path := filepath.Join(dir, entry.Name())
-		info, err := entry.Info()
-		if err != nil {
-			flog.Warningf("[%s:%s] 查看文件%s详细失败: %v", c.containerName, c.name, entry.Name(), err)
-			continue
-		}
-
-		fileInfos = append(fileInfos, struct {
-			path    string
-			size    int64
-			modTime time.Time
-		}{path, info.Size(), info.ModTime()})
-	}
+	fileInfos := c.getSortFileList()
 
 	if len(fileInfos) == 0 {
-		flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, dir, len(fileInfos), c.currentFile)
+		flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, c.actualPath, len(fileInfos), c.currentFile)
 		return
 	}
-
-	// 按修改时间排序
-	sort.Slice(fileInfos, func(i, j int) bool {
-		return fileInfos[i].modTime.Before(fileInfos[j].modTime)
-	})
 
 	// 最新的文件是当前写入的文件
 	c.currentFileMu.Lock()
-	c.currentFile = fileInfos[len(fileInfos)-1].path
+	c.currentFile = fileInfos[0].path
 	c.currentFileMu.Unlock()
 
-	flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, dir, len(fileInfos), c.currentFile)
+	flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, c.actualPath, len(fileInfos), c.currentFile)
 
 	// 处理所有文件
-	for _, fi := range fileInfos {
-		isCurrent := fi.path == c.currentFile
-
+	for index, fi := range fileInfos {
 		state := &fileState{
 			path:    fi.path,
 			size:    fi.size,
@@ -284,8 +250,9 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 			state.size = offset.FileSize
 		}
 
-		if !isCurrent {
-			// 非当前文件，标记为已完结
+		// 第0个,表示最新的文件
+		if index != 0 {
+			// 非第1个文件，标记为已完结
 			state.status = statusFinished
 		}
 
@@ -294,7 +261,7 @@ func (c *FileCollector) scanExistingFiles(dir string) {
 		c.filesMu.Unlock()
 
 		// 读取文件内容
-		c.readFile(state, isCurrent)
+		c.readFile(state, index == 0)
 	}
 }
 
@@ -305,16 +272,19 @@ func (c *FileCollector) handleEvents() {
 	for {
 		select {
 		case <-c.ctx.Done():
+			flog.Warningf("收到退出信号")
 			return
 
 		case event, ok := <-c.watcher.Events:
 			if !ok {
+				flog.Warningf("[watcher.Events]%s %s %s 通道关闭", c.containerID, c.containerName, c.actualPath)
 				return
 			}
 			c.processEvent(event)
 
 		case err, ok := <-c.watcher.Errors:
 			if !ok {
+				flog.Warningf("[watcher.Errors]%s %s %s 通道关闭", c.containerID, c.containerName, c.actualPath)
 				return
 			}
 			flog.Warningf("[%s:%s] fsnotify 错误: %v", c.containerName, c.name, err)
@@ -533,6 +503,20 @@ func (c *FileCollector) tryDeletePendingFiles() {
 		return // 没有新文件，不能删除
 	}
 
+	fileInfos := c.getSortFileList()
+	if len(fileInfos) == 0 {
+		return
+	}
+
+	// 构建需要保留的文件集合（保留最新的1个文件）
+	keepFiles := make(map[string]bool)
+	keepCount := 1
+	if len(fileInfos) > 0 {
+		for i := len(fileInfos) - 1; i >= 0 && i >= len(fileInfos)-keepCount; i-- {
+			keepFiles[fileInfos[i].path] = true
+		}
+	}
+
 	// 遍历待删除列表
 	c.pendingDeleteMu.Lock()
 	defer c.pendingDeleteMu.Unlock()
@@ -540,6 +524,12 @@ func (c *FileCollector) tryDeletePendingFiles() {
 	for filePath := range c.pendingDelete {
 		// 不能删除当前写入的文件
 		if filePath == currentFile {
+			continue
+		}
+
+		// 不能删除最新的N个文件
+		if keepFiles[filePath] {
+			flog.Infof("[%s:%s] 保留最新文件: %s", c.containerName, c.name, filepath.Base(filePath))
 			continue
 		}
 
@@ -564,4 +554,48 @@ func (c *FileCollector) tryDeletePendingFiles() {
 
 		flog.Infof("[%s:%s] 删除文件: %s", c.containerName, c.name, filepath.Base(filePath))
 	}
+}
+
+// 获取根据修改时间倒排的文件
+func (c *FileCollector) getSortFileList() []fileInfo {
+	var fileInfos []fileInfo
+
+	// 扫描目录，获取所有文件并按修改时间排序
+	entries, err := os.ReadDir(c.actualPath)
+	if err != nil {
+		flog.Warningf("[%s:%s] 扫描目录失败: %v", c.containerName, c.name, err)
+		return fileInfos
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+
+		// 检查文件扩展名
+		if !strings.HasSuffix(entry.Name(), "."+c.fileExt) {
+			continue
+		}
+
+		path := filepath.Join(c.actualPath, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			flog.Warningf("[%s:%s] 查看文件%s详细失败: %v", c.containerName, c.name, entry.Name(), err)
+			continue
+		}
+
+		fileInfos = append(fileInfos, fileInfo{path, info.Size(), info.ModTime()})
+	}
+
+	// 如果没有找到匹配文件，直接返回空字符串
+	if len(fileInfos) == 0 {
+		return fileInfos
+	}
+
+	// 按修改时间从新到旧排序
+	sort.Slice(fileInfos, func(i, j int) bool {
+		return fileInfos[i].modTime.After(fileInfos[j].modTime)
+	})
+
+	return fileInfos
 }
