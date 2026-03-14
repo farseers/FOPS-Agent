@@ -202,7 +202,7 @@ func (c *FileCollector) scanExistingFiles() {
 		return
 	}
 
-	flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件, 最新的文件为: %s", c.containerName, c.name, c.actualPath, len(fileInfos), fileInfos[0].path)
+	flog.Infof("[%s:%s] %s, 扫描到 %d 个文件, 最新的文件为: %s, 跟踪大小: %d", c.containerName, c.name, c.actualPath, len(fileInfos), filepath.Base(fileInfos[0].path), fileInfos[0].size)
 
 	// 处理所有文件
 	for _, fi := range fileInfos {
@@ -309,7 +309,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 
 	// 检查文件是否被 rotate（变小了）
 	if info.Size() < state.size {
-		flog.Infof("[%s:%s] 文件rotate: %s", c.containerName, c.name, filepath.Base(filePath))
+		flog.Infof("[%s:%s] 文件rotate: %s, 跟踪大小: %d, 实际大小: %d", c.containerName, c.name, filePath, state.size, info.Size())
 		state.readOffset = 0
 	}
 
@@ -370,7 +370,6 @@ func (c *FileCollector) readFile(state *fileState) {
 
 	// 更新偏移量（字节）
 	state.readOffset += bytesRead
-	state.size += bytesRead
 
 	// 发送到输出
 	if c.output != nil {
@@ -386,7 +385,7 @@ func (c *FileCollector) readFile(state *fileState) {
 		c.output.Write(data)
 	}
 
-	flog.Debugf("[%s:%s] %s 读取 %d 行", c.containerName, c.name, filepath.Base(state.path), len(lines))
+	flog.Debugf("[%s:%s] %s 读取 %d 行, 跟踪大小: %d", c.containerName, c.name, state.path, len(lines), state.size)
 }
 
 // OnOutputSuccess 输出成功回调
