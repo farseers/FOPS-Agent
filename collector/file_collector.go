@@ -417,7 +417,7 @@ func (c *FileCollector) tryDeletePendingFiles() {
 				err := os.Remove(fileState.path)
 				if err == nil {
 					delete(c.files, fileState.path)
-					flog.Infof("[%s:%s] 删除文件: %s", c.containerName, c.name, fileState.path)
+					flog.Infof("[%s:%s] 删除文件: %s, 最新文件: %s", c.containerName, c.name, fileState.path, fileInfos[0].path)
 					continue
 				}
 
