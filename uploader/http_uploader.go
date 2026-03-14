@@ -93,7 +93,7 @@ func (u *HTTPUploader) Write(data *output.Data) {
 	totalSize := u.buffer.Add(data.FilePath, data.Lines, data.CurSize)
 
 	// 如果超过缓冲区大小，检查是否可以上传
-	if totalSize >= u.buffer.curSize {
+	if totalSize >= u.buffer.maxSize {
 		// 检查上次失败后是否已过5秒
 		u.failMu.RLock()
 		lastFail := u.lastFailTime
