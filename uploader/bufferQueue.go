@@ -4,72 +4,76 @@ import (
 	"sync"
 )
 
+type fileInfo struct {
+	filePath string   // 文件地址
+	data     []string // 文件数据(本次要上传的数据)
+	dataSize int64    // 数据大小(本次要上传的数据大小)
+}
+
 // bufferQueue 缓冲队列
 type bufferQueue struct {
-	mu        sync.Mutex
-	data      []string          // 存储每行数据
-	fileInfos map[string]string // filePath -> collectorName
-	size      int64             // 当前数据大小（字节）
-	maxSize   int64             // 最大大小（字节）
+	mu        sync.Mutex           // 锁
+	fileInfos map[string]*fileInfo // filePath -> fileInfo 文件本次要上传的内容和大小（字节）
+	curSize   int64                // 当前数据大小（字节）
+	maxSize   int64                // 最大大小（字节）
+	line      int                  // 共多少行数据
 }
 
 // NewBufferQueue 创建缓冲队列
-func NewBufferQueue(maxSizeMB int) *bufferQueue {
+func NewBufferQueue(maxSize int64) *bufferQueue {
 	return &bufferQueue{
-		data:      make([]string, 0),
-		fileInfos: make(map[string]string),
-		maxSize:   int64(maxSizeMB) * 1024 * 1024,
+		fileInfos: make(map[string]*fileInfo),
+		maxSize:   maxSize,
 	}
 }
 
 // Add 添加数据
-func (q *bufferQueue) Add(lines []string, filePath string, collectorName string) int64 {
+func (q *bufferQueue) Add(filePath string, line []string, lineSize int64) int64 {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	var size int64
-	for _, line := range lines {
-		q.data = append(q.data, line)
-		size += int64(len(line))
+	// 检查文件
+	if _, ok := q.fileInfos[filePath]; !ok {
+		q.fileInfos[filePath] = &fileInfo{
+			filePath: filePath,
+		}
 	}
-	q.fileInfos[filePath] = collectorName
-	q.size += size
 
-	return q.size
+	q.fileInfos[filePath].data = append(q.fileInfos[filePath].data, line...)
+	q.fileInfos[filePath].dataSize += lineSize
+	q.curSize += lineSize
+	q.line += len(line)
+	return q.curSize
 }
 
 // GetAndClear 获取缓冲区数据并清空
-func (q *bufferQueue) GetAndClear() ([]string, map[string]string, int64) {
+func (q *bufferQueue) GetAndClear() (map[string]*fileInfo, int64, int) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
-	data := q.data
 	fileInfos := q.fileInfos
-	size := q.size
+	size := q.curSize
+	line := q.line
 
-	q.data = make([]string, 0)
-	q.fileInfos = make(map[string]string)
-	q.size = 0
+	// 清空数据
+	q.fileInfos = make(map[string]*fileInfo)
+	q.curSize = 0
+	q.line = 0
 
-	return data, fileInfos, size
+	return fileInfos, size, line
 }
 
 // IsEmpty 是否为空
 func (q *bufferQueue) IsEmpty() bool {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return len(q.data) == 0
+	return len(q.fileInfos) == 0
 }
 
 // PutBack 将数据放回队列头部（用于上传失败时恢复数据）
-func (q *bufferQueue) PutBack(data []string, fileInfos map[string]string, size int64) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
+func (q *bufferQueue) PutBack(fileInfos map[string]*fileInfo) {
 	// 将失败的数据放回队列头部，确保优先重试
-	q.data = append(data, q.data...)
-	for k, v := range fileInfos {
-		q.fileInfos[k] = v
+	for filePath, v := range fileInfos {
+		q.Add(filePath, v.data, v.dataSize)
 	}
-	q.size += size
 }

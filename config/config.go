@@ -24,8 +24,6 @@ type Config struct {
 
 // ContainerConfig 容器配置
 type ContainerConfig struct {
-	// OffsetDir 偏移量存储目录
-	OffsetDir string `yaml:"OffsetDir"`
 	// IgnoreNames 忽略的容器名称（前缀匹配）
 	IgnoreNames []string `yaml:"IgnoreNames"`
 	// StatsInterval 资源收集间隔（秒）
@@ -45,7 +43,7 @@ type CollectorConfig struct {
 	// UploadInterval 上传间隔（秒）
 	UploadInterval int `yaml:"UploadInterval"`
 	// BufferSizeMB 缓冲区大小（MB）
-	BufferSizeMB int `yaml:"BufferSizeMB"`
+	BufferSizeMB int64 `yaml:"BufferSizeMB"`
 }
 
 // Load 从文件加载配置
@@ -73,10 +71,6 @@ func Load() *Config {
 		panic("请配置Fops.WsServer")
 	}
 
-	// 设置默认值
-	if cfg.Container.OffsetDir == "" {
-		cfg.Container.OffsetDir = "/var/lib/fops-agent/offset"
-	}
 	if cfg.Container.StatsInterval == 0 {
 		cfg.Container.StatsInterval = 3
 	}

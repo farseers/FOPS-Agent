@@ -20,30 +20,20 @@ import (
 
 // FileCollector 文件采集器
 type FileCollector struct {
-	name          string
-	containerID   string
-	containerName string
-	appName       string
-	watchDir      string // 配置文件定义的目录
-	actualPath    string // 实际要监听的目录
-	fileExt       string
-	pid           int
-
-	watcher *fsnotify.Watcher
-	store   *FileStore
-	output  output.Output
+	name          string            // 配置名称
+	containerID   string            // 容器ID
+	containerName string            // 容器名称
+	appName       string            // 应用名称
+	watchDir      string            // 配置文件定义的目录
+	actualPath    string            // 实际要监听的目录
+	fileExt       string            // 监听的文件扩展名
+	pid           int               // 容器在主机的进程ID
+	watcher       *fsnotify.Watcher // 文件监听客户端
+	output        output.Output     // 上传器
 
 	// 文件状态管理
 	filesMu sync.RWMutex
 	files   map[string]*fileState // filePath -> state
-
-	// 当前写入的文件
-	currentFileMu sync.Mutex
-	currentFile   string // 最新的的文件
-
-	// 待删除的文件（已输出成功，等待新文件出现后删除）
-	pendingDeleteMu sync.Mutex
-	pendingDelete   map[string]bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -52,15 +42,12 @@ type FileCollector struct {
 
 // fileState 文件状态
 type fileState struct {
-	path       string
-	size       int64
-	modTime    time.Time
-	offset     int64
-	status     fileStatus
-	outputDone bool // 输出成功标记
+	path         string
+	modTime      time.Time // 文件修改时间
+	size         int64     // 文件大小
+	readOffset   int64     // 读取时的偏移量
+	uploadOffset int64     // 上传时的偏移量
 }
-
-type fileStatus int
 
 // 文件属性
 type fileInfo struct {
@@ -69,27 +56,23 @@ type fileInfo struct {
 	modTime time.Time // 修改时间
 }
 
-const (
-	statusWriting  fileStatus = iota // 正在写入
-	statusFinished                   // 已完结
-	statusRead                       // 已读完
-	statusOutput                     // 已输出
-)
-
 // NewFileCollector 创建文件采集器
-func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, store *FileStore, out output.Output) *FileCollector {
-	return &FileCollector{
+func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, out output.Output) *FileCollector {
+	fc := &FileCollector{
 		name:          name,
 		containerID:   containerID,
 		containerName: containerName,
 		watchDir:      watchDir,
 		fileExt:       fileExt,
 		pid:           pid,
-		store:         store,
 		output:        out,
 		files:         make(map[string]*fileState),
-		pendingDelete: make(map[string]bool),
 	}
+	// 注册回调到全局上传器
+	if out != nil {
+		out.RegisterCallback(fc.OnOutputSuccess)
+	}
+	return fc
 }
 
 // Name 采集器名称
@@ -209,51 +192,24 @@ func (w *FileCollector) detectAppName() (string, string) {
 	return actualPath, ""
 }
 
-// getActualPath 获取实际监听路径
-func (c *FileCollector) getActualPath() string {
-	// 替换 {app} 占位符
-	path := strings.Replace(c.watchDir, "{app}", c.appName, -1)
-	// 使用 ProcPrefix（自动检测 Docker 或主机环境）
-	return filepath.Join(config.ProcPrefix, fmt.Sprintf("%d", c.pid), "root", path)
-}
-
 // scanExistingFiles 扫描已有文件
 func (c *FileCollector) scanExistingFiles() {
 	// 收集文件信息
 	fileInfos := c.getSortFileList()
 
 	if len(fileInfos) == 0 {
-		flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, c.actualPath, len(fileInfos), c.currentFile)
+		flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件", c.containerName, c.name, c.actualPath, len(fileInfos))
 		return
 	}
 
-	// 最新的文件是当前写入的文件
-	c.currentFileMu.Lock()
-	c.currentFile = fileInfos[0].path
-	c.currentFileMu.Unlock()
-
-	flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件，当前: %s", c.containerName, c.name, c.actualPath, len(fileInfos), c.currentFile)
+	flog.Infof("[%s:%s] 目录: %s, 扫描到 %d 个文件, 最新的文件为: %s", c.containerName, c.name, c.actualPath, len(fileInfos), fileInfos[0].path)
 
 	// 处理所有文件
-	for index, fi := range fileInfos {
+	for _, fi := range fileInfos {
 		state := &fileState{
 			path:    fi.path,
 			size:    fi.size,
 			modTime: fi.modTime,
-			status:  statusWriting,
-		}
-
-		// 获取偏移量
-		offset := c.store.Get(c.containerID, c.name, fi.path)
-		if offset != nil {
-			state.offset = offset.Offset
-			state.size = offset.FileSize
-		}
-
-		// 第0个,表示最新的文件
-		if index != 0 {
-			// 非第1个文件，标记为已完结
-			state.status = statusFinished
 		}
 
 		c.filesMu.Lock()
@@ -261,7 +217,7 @@ func (c *FileCollector) scanExistingFiles() {
 		c.filesMu.Unlock()
 
 		// 读取文件内容
-		c.readFile(state, index == 0)
+		c.readFile(state)
 	}
 }
 
@@ -312,27 +268,6 @@ func (c *FileCollector) processEvent(event fsnotify.Event) {
 func (c *FileCollector) handleFileCreate(filePath string) {
 	flog.Infof("[%s:%s] 新文件: %s", c.containerName, c.name, filePath)
 
-	// 标记上一个文件为已完结
-	c.currentFileMu.Lock()
-	oldFile := c.currentFile
-	c.currentFile = filePath
-	c.currentFileMu.Unlock()
-
-	if oldFile != "" {
-		c.filesMu.Lock()
-		if state, ok := c.files[oldFile]; ok {
-			state.status = statusFinished
-		}
-		c.filesMu.Unlock()
-
-		// 读取旧文件剩余内容
-		c.filesMu.RLock()
-		if state, ok := c.files[oldFile]; ok {
-			c.readFile(state, false)
-		}
-		c.filesMu.RUnlock()
-	}
-
 	// 添加新文件状态
 	info, err := os.Stat(filePath)
 	if err != nil {
@@ -345,8 +280,6 @@ func (c *FileCollector) handleFileCreate(filePath string) {
 		path:    filePath,
 		size:    info.Size(),
 		modTime: info.ModTime(),
-		offset:  0,
-		status:  statusWriting,
 	}
 	c.filesMu.Unlock()
 
@@ -360,41 +293,36 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	state, ok := c.files[filePath]
 	c.filesMu.RUnlock()
 
-	if !ok {
-		flog.Warningf("[%s:%s] 文件: %s, 不在跟踪列表中, 当前文件是: %s", c.containerName, c.name, filePath, c.currentFile)
-		//return
-	}
-
-	// 只处理当前写入的文件
-	c.currentFileMu.Lock()
-	isCurrent := c.currentFile == filePath
-	c.currentFileMu.Unlock()
-
-	if !isCurrent {
-		//return
-	}
-
 	// 获取最新文件信息
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return
 	}
 
+	// 文件不在跟踪列表
+	if !ok {
+		c.files[filePath] = &fileState{
+			path: filePath,
+		}
+		flog.Warningf("[%s:%s] 文件不在跟踪列表,重新加入: %s", c.containerName, c.name, filePath)
+	}
+
 	// 检查文件是否被 rotate（变小了）
 	if info.Size() < state.size {
 		flog.Infof("[%s:%s] 文件rotate: %s", c.containerName, c.name, filepath.Base(filePath))
-		state.offset = 0
+		state.readOffset = 0
 	}
 
+	// 重新读取文件大小和时间
 	state.size = info.Size()
 	state.modTime = info.ModTime()
 
 	// 读取新增内容
-	c.readFile(state, true)
+	c.readFile(state)
 }
 
 // readFile 读取文件内容
-func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
+func (c *FileCollector) readFile(state *fileState) {
 	// 打开文件
 	file, err := os.Open(state.path)
 	if err != nil {
@@ -404,11 +332,11 @@ func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
 	defer file.Close()
 
 	// 定位到偏移量位置（字节）
-	if state.offset > 0 {
-		_, err = file.Seek(state.offset, 0)
+	if state.readOffset > 0 {
+		_, err = file.Seek(state.readOffset, 0)
 		if err != nil {
-			flog.Warningf("[%s:%s] 定位文件失败: %v", c.containerName, c.name, err)
-			return
+			flog.Warningf("[%s:%s] 定位文件失败: %v, 重置偏移量为0", c.containerName, c.name, err)
+			state.readOffset = 0
 		}
 	}
 
@@ -441,20 +369,8 @@ func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
 	}
 
 	// 更新偏移量（字节）
-	state.offset += bytesRead
-
-	// 保存偏移量
-	c.store.Set(&FileOffset{
-		ContainerID:    c.containerID,
-		ContainerName:  c.containerName,
-		AppName:        c.appName,
-		CollectorName:  c.name,
-		FilePath:       state.path,
-		Offset:         state.offset,
-		FileSize:       state.size,
-		LastReadTime:   time.Now(),
-		LastModifyTime: state.modTime,
-	})
+	state.readOffset += bytesRead
+	state.size += bytesRead
 
 	// 发送到输出
 	if c.output != nil {
@@ -462,10 +378,9 @@ func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
 			ContainerID:   c.containerID,
 			ContainerName: c.containerName,
 			AppName:       c.appName,
-			CollectorName: c.name,
 			FilePath:      state.path,
 			Lines:         lines,
-			FileSize:      state.size,
+			CurSize:       bytesRead,
 		}
 
 		c.output.Write(data)
@@ -475,84 +390,49 @@ func (c *FileCollector) readFile(state *fileState, isCurrent bool) {
 }
 
 // OnOutputSuccess 输出成功回调
-func (c *FileCollector) OnOutputSuccess(filePath string) {
+func (c *FileCollector) OnOutputSuccess(filePath string, uploadSize int64) {
 	c.filesMu.Lock()
 	if state, ok := c.files[filePath]; ok {
-		state.outputDone = true
+		state.uploadOffset += uploadSize
 	}
 	c.filesMu.Unlock()
-
-	// 添加到待删除列表
-	c.pendingDeleteMu.Lock()
-	c.pendingDelete[filePath] = true
-	c.pendingDeleteMu.Unlock()
-
-	// 尝试删除
-	c.tryDeletePendingFiles()
 }
 
 // tryDeletePendingFiles 尝试删除待删除的文件
 func (c *FileCollector) tryDeletePendingFiles() {
-	// 检查是否有当前写入的文件
-	c.currentFileMu.Lock()
-	hasCurrentFile := c.currentFile != ""
-	currentFile := c.currentFile
-	c.currentFileMu.Unlock()
-
-	if !hasCurrentFile {
-		return // 没有新文件，不能删除
-	}
-
 	fileInfos := c.getSortFileList()
-	if len(fileInfos) == 0 {
+	if len(fileInfos) == 1 {
 		return
 	}
 
-	// 构建需要保留的文件集合（保留最新的1个文件）
-	keepFiles := make(map[string]bool)
-	keepCount := 1
-	if len(fileInfos) > 0 {
-		for i := len(fileInfos) - 1; i >= 0 && i >= len(fileInfos)-keepCount; i-- {
-			keepFiles[fileInfos[i].path] = true
-		}
-	}
+	// 从状态中移除
+	c.filesMu.Lock()
+	defer c.filesMu.Unlock()
 
-	// 遍历待删除列表
-	c.pendingDeleteMu.Lock()
-	defer c.pendingDeleteMu.Unlock()
+	// 永远不删除第1个最新修改时间的文件
+	for i := 1; i < len(fileInfos); i++ {
+		if fileState, ok := c.files[fileInfos[i].path]; ok {
+			// 读取了文件,且上传和读取的偏移量相同,则表示可以删除
+			if fileState.readOffset > 0 && fileState.readOffset == fileState.uploadOffset {
+				// 删除文件
+				err := os.Remove(fileState.path)
+				if err == nil {
+					delete(c.files, fileState.path)
+					flog.Infof("[%s:%s] 删除文件: %s", c.containerName, c.name, fileState.path)
+					continue
+				}
 
-	for filePath := range c.pendingDelete {
-		// 不能删除当前写入的文件
-		if filePath == currentFile {
-			continue
-		}
+				// 文件不存在
+				if strings.Contains(err.Error(), "no such file") {
+					delete(c.files, fileState.path)
+					flog.Infof("[%s:%s] 文件不存在,仅删除跟踪列表: %s", c.containerName, c.name, fileState.path)
+					continue
+				}
 
-		// 不能删除最新的N个文件
-		if keepFiles[filePath] {
-			flog.Infof("[%s:%s] 保留最新文件: %s", c.containerName, c.name, filepath.Base(filePath))
-			continue
-		}
-
-		// 删除文件
-		if err := os.Remove(filePath); err != nil {
-			if !strings.Contains(err.Error(), "no such file") {
+				// 删除失败
 				flog.Warningf("[%s:%s] 删除文件失败: %v", c.containerName, c.name, err)
-				continue
 			}
 		}
-
-		// 删除偏移量记录
-		c.store.Delete(c.containerID, c.name, filePath)
-
-		// 从状态中移除
-		c.filesMu.Lock()
-		delete(c.files, filePath)
-		c.filesMu.Unlock()
-
-		// 从待删除列表移除
-		delete(c.pendingDelete, filePath)
-
-		flog.Infof("[%s:%s] 删除文件: %s", c.containerName, c.name, filepath.Base(filePath))
 	}
 }
 

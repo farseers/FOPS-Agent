@@ -1,5 +1,7 @@
 package output
 
+type SuccessCallback func(filePath string, uploadSize int64)
+
 // Data 数据输出内容
 type Data struct {
 	// ContainerID 容器ID
@@ -8,14 +10,12 @@ type Data struct {
 	ContainerName string
 	// AppName 应用名称
 	AppName string
-	// CollectorName 采集器名称
-	CollectorName string
 	// FilePath 文件路径
 	FilePath string
 	// Lines 内容行
 	Lines []string
-	// FileSize 文件大小
-	FileSize int64
+	// CurSize 本次上传的大小
+	CurSize int64
 }
 
 // Output 数据输出接口
@@ -24,11 +24,11 @@ type Output interface {
 	// Name 输出器名称
 	Name() string
 	// Start 启动输出器
-	Start() error
+	Start()
 	// Stop 停止输出器
 	Stop()
 	// Write 写入数据
 	Write(data *Data)
-	// RegisterCallback 注册回调（collectorName -> callback）
-	RegisterCallback(collectorName string, callback func(filePath string))
+	// RegisterCallback 处理成功后注册回调
+	RegisterCallback(callback SuccessCallback)
 }

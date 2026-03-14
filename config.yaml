@@ -2,8 +2,6 @@ Fops:
   WsServer: "ws://127.0.0.1:8889"
 Container:
   StatsInterval: 3
-# 偏移量存储目录
-  OffsetDir: /var/lib/fops-agent/offset
   # 忽略的容器名称（前缀匹配）
   IgnoreNames: 
     - "portainer-agent"

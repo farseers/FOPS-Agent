@@ -23,7 +23,7 @@ type ContainerCollector struct {
 }
 
 // NewContainerCollector 创建容器文件监视器
-func NewContainerCollector(containerID, containerName string, pid int, cfg *config.Config, store *collector.FileStore, outputs map[string]output.Output) (*ContainerCollector, error) {
+func NewContainerCollector(containerID, containerName string, pid int, cfg *config.Config, outputs map[string]output.Output) (*ContainerCollector, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &ContainerCollector{
 		containerID:   containerID,
@@ -37,15 +37,8 @@ func NewContainerCollector(containerID, containerName string, pid int, cfg *conf
 	for _, cc := range cfg.Collectors {
 		// 使用全局上传器
 		out := outputs[cc.Name]
-		col := collector.NewFileCollector(cc.Name, containerID, containerName, cc.WatchDir, cc.FileExt, pid, store, out)
+		col := collector.NewFileCollector(cc.Name, containerID, containerName, cc.WatchDir, cc.FileExt, pid, out)
 		w.collectors = append(w.collectors, col)
-
-		// 注册回调到全局上传器
-		if out != nil {
-			out.RegisterCallback(cc.Name, func(filePath string) {
-				col.OnOutputSuccess(filePath)
-			})
-		}
 	}
 	return w, nil
 }

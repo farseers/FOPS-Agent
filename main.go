@@ -1,7 +1,6 @@
 package main
 
 import (
-	"fops-agent/collector"
 	"fops-agent/config"
 	"fops-agent/container"
 	"fops-agent/watcher"
@@ -28,15 +27,9 @@ func main() {
 	if dockerInfo.ServerVersion != "" {
 		// 监听docker事件,用以发送消息到fops
 		containerMgr.Client.Event.Register(&MonitorDockerEvent{})
-		// 创建偏移量存储
-		store, err := collector.NewFileStore(cfg.Container.OffsetDir)
-		if err != nil {
-			flog.Warningf("创建偏移量存储失败: %v", err)
-			return
-		}
 
 		// 创建监视器管理器（订阅容器事件）
-		fileWatcherMgr := watcher.NewCollectorManager(cfg, store)
+		fileWatcherMgr := watcher.NewCollectorManager(cfg)
 
 		// 订阅容器变化
 		containerMgr.Subscribe(fileWatcherMgr)

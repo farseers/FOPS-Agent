@@ -4,7 +4,6 @@ import (
 	"strings"
 	"sync"
 
-	"fops-agent/collector"
 	"fops-agent/config"
 	"fops-agent/output"
 	"fops-agent/uploader"
@@ -16,30 +15,23 @@ import (
 // CollectorManager 文件监视器管理器
 // 订阅容器事件，管理每个容器的文件监视器
 type CollectorManager struct {
-	cfg      *config.Config
-	store    *collector.FileStore
+	cfg      *config.Config           // 配置文件
 	outputs  map[string]output.Output // collectorName -> Output（全局共享）
 	watchers sync.Map                 // containerID -> *ContainerCollector
 }
 
 // NewCollectorManager 创建文件监视器管理器
-func NewCollectorManager(cfg *config.Config, store *collector.FileStore) *CollectorManager {
+func NewCollectorManager(cfg *config.Config) *CollectorManager {
 	m := &CollectorManager{
 		cfg:     cfg,
-		store:   store,
 		outputs: make(map[string]output.Output),
 	}
 
 	// 预创建全局上传器（每个 collector 一个）
 	for _, cc := range cfg.Collectors {
 		m.outputs[cc.Name] = uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB)
-	}
-
-	// 启动所有上传器
-	for _, out := range m.outputs {
-		if err := out.Start(); err != nil {
-			flog.Errorf("[FileCollectorManager] 启动上传器失败: %v", err)
-		}
+		// 启动所有上传器
+		m.outputs[cc.Name].Start()
 	}
 
 	return m
@@ -59,7 +51,7 @@ func (m *CollectorManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 	if _, ok := m.watchers.Load(c.ID); ok {
 		return
 	}
-	w, err := NewContainerCollector(c.ID, containerName, c.State.Pid, m.cfg, m.store, m.outputs)
+	w, err := NewContainerCollector(c.ID, containerName, c.State.Pid, m.cfg, m.outputs)
 	if err != nil {
 		flog.Errorf("[FileWatcher] 创建监视器失败: %v", err)
 		return
@@ -77,7 +69,6 @@ func (m *CollectorManager) OnContainerRemove(containerID string) {
 	}
 	w := val.(*ContainerCollector)
 	w.Stop()
-	m.store.DeleteByContainer(containerID)
 	m.watchers.Delete(containerID)
 }
 
