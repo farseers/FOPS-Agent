@@ -385,7 +385,7 @@ func (c *FileCollector) readFile(state *fileState) {
 		c.output.Write(data)
 	}
 
-	flog.Debugf("[%s:%s] %s 读取 %d 行, 跟踪大小: %d", c.containerName, c.name, state.path, len(lines), state.size)
+	flog.Debugf("[%s:%s] %s 读取 %d 行, %.2f MB", c.containerName, c.name, state.path, len(lines), float64(bytesRead)/1024/1024)
 }
 
 // OnOutputSuccess 输出成功回调
