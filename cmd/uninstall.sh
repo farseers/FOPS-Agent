@@ -28,6 +28,10 @@ systemctl reset-failed
 echo "删除程序文件 ${INSTALL_DIR}/${APP_NAME}..."
 rm -f "${INSTALL_DIR}/${APP_NAME}"
 
+# 删除配置文件
+echo "删除配置文件 ${INSTALL_DIR}/config.yaml..."
+rm -f "${INSTALL_DIR}/config.yaml"
+
 # 删除环境变量
 echo "删除环境变量文件 ${ENV_FILE}..."
 rm -f "${ENV_FILE}"

@@ -43,7 +43,16 @@ fi
 echo "正在下载 ${APP_NAME}.$(uname -s).$(uname -m):${VERSION}..."
 DOWNLOAD_URL="https://github.com/farseers/FOPS-Agent/releases/download/${VERSION}/${APP_NAME}.$(uname -s).$(uname -m)"
 if ! wget -O "${INSTALL_DIR}/${APP_NAME}" "${DOWNLOAD_URL}"; then
-   echo "下载失败，请检查版本号和网络连接" >&2
+   echo "下载二进制文件失败，请检查版本号和网络连接" >&2
+   exit 1
+fi
+
+
+# 下载配置文件
+echo "正在下载 config.yaml..."
+DOWNLOAD_URL="https://github.com/farseers/FOPS-Agent/releases/download/${VERSION}/config.yaml"
+if ! wget -O "${INSTALL_DIR}/config.yaml" "${DOWNLOAD_URL}"; then
+   echo "下载配置失败，请检查版本号和网络连接" >&2
    exit 1
 fi
 

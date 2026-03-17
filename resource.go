@@ -61,6 +61,10 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, containerMgr *co
 				res.Availability = strings.ToUpper(string(res.Availability[0])) + res.Availability[1:]
 			}
 
+			if res.DockerEngineVersion == "未安装" {
+				res.Availability = "Active"
+			}
+
 			// 标签
 			res.Label = collections.NewList[docker.DockerLabelVO]()
 			for k, v := range dockerInfo.Labels {
