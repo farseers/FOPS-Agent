@@ -6,3 +6,6 @@ curl -sSL https://github.com/farseers/FOPS-Agent/releases/download/v0.1.0/uninst
 
 # 安装命令
 curl -sSL https://github.com/farseers/FOPS-Agent/releases/download/v0.1.0/install.sh | sudo bash -s -- --env Fops_WsServer="wss://fops.xxx.com"
+
+# 查看实时日志
+journalctl -u fops-agent -f -n 0

@@ -174,7 +174,7 @@ func (w *FileCollector) detectAppName() (string, string) {
 
 	// parentDir = /var/log/linkTrace
 	parentDir := strings.TrimSuffix(filepath.Dir(strings.Replace(w.watchDir, "{app}/", "", -1)), "/")
-	// actualPath = /proc/1000/root//var/log/linkTrace
+	// actualPath = /proc/1000/root/var/log/linkTrace
 	actualPath := filepath.Join(config.ProcPrefix, fmt.Sprintf("%d", w.pid), "root", parentDir)
 	// 读取目录
 	entries, err := os.ReadDir(actualPath)
@@ -182,14 +182,21 @@ func (w *FileCollector) detectAppName() (string, string) {
 		return actualPath, ""
 	}
 
-	// 返回第1个目录.(理论只会有1个目录存在)
+	var firstDir string
 	for _, entry := range entries {
 		if entry.IsDir() {
-			return actualPath, entry.Name()
+			dirName := entry.Name()
+			// 先使用名称匹配
+			if strings.EqualFold(dirName, w.containerName) {
+				return actualPath, dirName
+			}
+			if len(firstDir) == 0 {
+				firstDir = dirName
+			}
 		}
 	}
-
-	return actualPath, ""
+	// 返回第1个目录.(理论只会有1个目录存在)
+	return actualPath, firstDir
 }
 
 // scanExistingFiles 扫描已有文件

@@ -105,3 +105,8 @@ func parseContainerName(name string) string {
 	}
 	return name
 }
+
+// 获取out
+func (m *CollectorManager) GetOutPut(name string) output.Output {
+	return m.outputs[name]
+}
