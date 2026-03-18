@@ -154,7 +154,7 @@ func (u *HTTPUploader) flush() {
 	}
 
 	// 获取缓冲区数据并清空
-	fileInfos, size, line := u.buffer.GetAndClear()
+	fileInfos, size, line := u.buffer.GetAndClear(2)
 	if len(fileInfos) == 0 {
 		return
 	}
@@ -164,7 +164,7 @@ func (u *HTTPUploader) flush() {
 
 	// 上传
 	if err := u.upload(body); err != nil {
-		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据: %v", u.name, line, err)
+		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据，%.2f MB: %v", u.name, line, float64(size)/1024/1024, err)
 
 		// 将数据放回缓冲区，避免数据丢失
 		u.buffer.PutBack(fileInfos)
