@@ -194,11 +194,13 @@ func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
 	var buf bytes.Buffer
 	buf.WriteString(`{"List":[`)
 
+	first := true
 	for _, fileInfo := range fileInfos {
-		for i, line := range fileInfo.data {
-			if i > 0 {
+		for _, line := range fileInfo.data {
+			if !first {
 				buf.WriteByte(',')
 			}
+			first = false
 			// 检查 JSON 是否合法
 			if json.Valid([]byte(line)) {
 				buf.WriteString(line)

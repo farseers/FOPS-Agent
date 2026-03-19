@@ -296,21 +296,18 @@ func (c *FileCollector) handleFileCreate(filePath string) {
 
 // handleFileWrite 处理文件写入事件
 func (c *FileCollector) handleFileWrite(filePath string) {
-	c.filesMu.RLock()
-	state, ok := c.files[filePath]
-	c.filesMu.RUnlock()
-
-	// 获取最新文件信息
+	// 先获取文件信息，避免在持锁期间做 IO
 	info, err := os.Stat(filePath)
 	if err != nil {
 		return
 	}
 
-	// 文件不在跟踪列表
+	c.filesMu.Lock()
+	state, ok := c.files[filePath]
 	if !ok {
-		c.files[filePath] = &fileState{
-			path: filePath,
-		}
+		// 文件不在跟踪列表，新建 state，避免后续 nil 指针 panic
+		state = &fileState{path: filePath}
+		c.files[filePath] = state
 		flog.Warningf("[%s:%s] 文件不在跟踪列表,重新加入: %s", c.containerName, c.name, filePath)
 	}
 
@@ -323,6 +320,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	// 重新读取文件大小和时间
 	state.size = info.Size()
 	state.modTime = info.ModTime()
+	c.filesMu.Unlock()
 
 	// 读取新增内容
 	c.readFile(state)
