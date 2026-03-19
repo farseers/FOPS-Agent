@@ -33,12 +33,12 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, containerMgr *co
 
 	for {
 		wsClient, err := ws.Connect(wsServer, 8192)
-		wsClient.AutoExit = false
 		if err != nil {
 			flog.Warningf("[%s]Fops.WsServer连接失败: %s, 将在3秒后重连", wsServer, err.Error())
 			time.Sleep(3 * time.Second)
 			continue
 		}
+		wsClient.AutoExit = false
 
 		for {
 			sw2 := stopwatch.StartNew()

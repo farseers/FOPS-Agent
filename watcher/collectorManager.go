@@ -1,23 +1,24 @@
 package watcher
 
 import (
-	"strings"
 	"sync"
+	"sync/atomic"
 
 	"fops-agent/config"
+	"fops-agent/container"
 	"fops-agent/output"
 	"fops-agent/uploader"
 
 	"github.com/farseer-go/docker"
 	"github.com/farseer-go/fs/flog"
 )
-
 // CollectorManager 文件监视器管理器
 // 订阅容器事件，管理每个容器的文件监视器
 type CollectorManager struct {
-	cfg      *config.Config           // 配置文件
-	outputs  map[string]output.Output // collectorName -> Output（全局共享）
-	watchers sync.Map                 // containerID -> *ContainerCollector
+	cfg          *config.Config           // 配置文件
+	outputs      map[string]output.Output // collectorName -> Output（全局共享）
+	watchers     sync.Map                 // containerID -> *ContainerCollector
+	watcherCount atomic.Int64             // 监视器数量
 }
 
 // NewCollectorManager 创建文件监视器管理器
@@ -39,7 +40,7 @@ func NewCollectorManager(cfg *config.Config) *CollectorManager {
 
 // OnContainerAdd 容器新增事件（实现 container.Observer 接口）
 func (m *CollectorManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
-	containerName := parseContainerName(c.Name)
+	containerName := container.ParseContainerName(c.Name)
 	if m.cfg.ShouldIgnore(containerName) {
 		flog.Debugf("[FileWatcher] 忽略容器: %s", containerName)
 		return
@@ -59,6 +60,7 @@ func (m *CollectorManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 
 	w.Start()
 	m.watchers.Store(c.ID, w)
+	m.watcherCount.Add(1)
 }
 
 // OnContainerRemove 容器删除事件（实现 container.Observer 接口）
@@ -70,6 +72,7 @@ func (m *CollectorManager) OnContainerRemove(containerID string) {
 	w := val.(*ContainerCollector)
 	w.Stop()
 	m.watchers.Delete(containerID)
+	m.watcherCount.Add(-1)
 }
 
 // Stop 停止所有监视器
@@ -89,21 +92,7 @@ func (m *CollectorManager) Stop() {
 
 // GetWatcherCount 获取监视器数量
 func (m *CollectorManager) GetWatcherCount() int {
-	count := 0
-	m.watchers.Range(func(key, value interface{}) bool {
-		count++
-		return true
-	})
-	return count
-}
-
-// parseContainerName 解析容器名称
-func parseContainerName(name string) string {
-	name = strings.TrimPrefix(name, "/")
-	if idx := strings.Index(name, "."); idx > 0 {
-		return name[:idx]
-	}
-	return name
+	return int(m.watcherCount.Load())
 }
 
 // 获取out

@@ -6,7 +6,9 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -72,7 +74,7 @@ func (u *HTTPUploader) Start() {
 	u.wg.Add(1)
 	go u.uploadLoop()
 
-	flog.Infof("[HTTPUploader:%s] 启动，上传地址: %s，间隔: %ds，缓冲: %dMB", u.name, u.uploadURL, u.uploadInterval, u.buffer.curSize/1024/1024)
+	flog.Infof("[HTTPUploader:%s] 启动，上传地址: %s，间隔: %ds，缓冲: %dMB", u.name, u.uploadURL, u.uploadInterval, u.buffer.maxSize/1024/1024)
 }
 
 // Stop 停止输出器
@@ -191,21 +193,26 @@ func (u *HTTPUploader) flush() {
 
 // buildJSON 构建 JSON 请求体
 func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
+	// 对 key 排序，保证同批次内文件顺序稳定
+	keys := make([]string, 0, len(fileInfos))
+	for k := range fileInfos {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
 	var buf bytes.Buffer
 	buf.WriteString(`{"List":[`)
 
 	first := true
-	for _, fileInfo := range fileInfos {
-		for _, line := range fileInfo.data {
+	for _, k := range keys {
+		for _, line := range fileInfos[k].data {
 			if !first {
 				buf.WriteByte(',')
 			}
 			first = false
-			// 检查 JSON 是否合法
 			if json.Valid([]byte(line)) {
 				buf.WriteString(line)
 			} else {
-				// 非法 JSON，转义后作为字符串
 				escaped, _ := json.Marshal(line)
 				buf.Write(escaped)
 			}
@@ -229,6 +236,8 @@ func (u *HTTPUploader) upload(body []byte) error {
 		return fmt.Errorf("请求失败: %w", err)
 	}
 	defer resp.Body.Close()
+	// 读取并丢弃响应体，确保连接可被复用
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("服务端返回错误: %d", resp.StatusCode)

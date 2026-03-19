@@ -14,7 +14,7 @@ var ProcPrefix = "/proc"
 // Config 全局配置
 type Config struct {
 	// Fops 服务配置
-	FopsHttpServer string `yaml:"Fops.WsServer"`
+	FopsHttpServer string // 由 FopsWsServer 转换而来，不从配置文件读取
 	FopsWsServer   string `yaml:"Fops.WsServer"`
 	// Container 容器配置
 	Container ContainerConfig `yaml:"Container"`

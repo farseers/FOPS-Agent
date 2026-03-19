@@ -2,7 +2,6 @@ package watcher
 
 import (
 	"context"
-	"sync"
 
 	"fops-agent/collector"
 	"fops-agent/config"
@@ -19,7 +18,6 @@ type ContainerCollector struct {
 	collectors    []collector.Collector
 	ctx           context.Context
 	cancel        context.CancelFunc
-	wg            sync.WaitGroup
 }
 
 // NewContainerCollector 创建容器文件监视器
@@ -56,7 +54,6 @@ func (w *ContainerCollector) Stop() {
 	for _, col := range w.collectors {
 		col.Stop()
 	}
-	w.wg.Wait()
 	flog.Infof("[ContainerCollector] 已停止: %s", w.containerName)
 }
 

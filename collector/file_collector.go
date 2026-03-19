@@ -42,6 +42,7 @@ type FileCollector struct {
 
 // fileState 文件状态
 type fileState struct {
+	mu           sync.Mutex // 保护 readOffset / uploadOffset 的并发读写
 	path         string
 	modTime      time.Time // 文件修改时间
 	size         int64     // 文件大小
@@ -90,6 +91,7 @@ func (c *FileCollector) Start(ctx context.Context) {
 
 	// 先等30秒,等应用启动完毕
 	t := time.NewTicker(30 * time.Second)
+	defer t.Stop()
 
 	for {
 		select {
@@ -312,6 +314,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	}
 
 	// 检查文件是否被 rotate（变小了）
+	state.mu.Lock()
 	if info.Size() < state.size {
 		flog.Infof("[%s:%s] 文件rotate: %s, 跟踪大小: %d, 实际大小: %d", c.containerName, c.name, filePath, state.size, info.Size())
 		state.readOffset = 0
@@ -320,6 +323,7 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	// 重新读取文件大小和时间
 	state.size = info.Size()
 	state.modTime = info.ModTime()
+	state.mu.Unlock()
 	c.filesMu.Unlock()
 
 	// 读取新增内容
@@ -336,12 +340,19 @@ func (c *FileCollector) readFile(state *fileState) {
 	}
 	defer file.Close()
 
+	// 持锁读取并更新偏移量
+	state.mu.Lock()
+	offset := state.readOffset
+	state.mu.Unlock()
+
 	// 定位到偏移量位置（字节）
-	if state.readOffset > 0 {
-		_, err = file.Seek(state.readOffset, 0)
-		if err != nil {
+	if offset > 0 {
+		if _, err = file.Seek(offset, 0); err != nil {
 			flog.Warningf("[%s:%s] 定位文件失败: %v, 重置偏移量为0", c.containerName, c.name, err)
+			state.mu.Lock()
 			state.readOffset = 0
+			state.mu.Unlock()
+			offset = 0
 		}
 	}
 
@@ -374,7 +385,9 @@ func (c *FileCollector) readFile(state *fileState) {
 	}
 
 	// 更新偏移量（字节）
+	state.mu.Lock()
 	state.readOffset += bytesRead
+	state.mu.Unlock()
 
 	// 发送到输出
 	if c.output != nil {
@@ -395,11 +408,14 @@ func (c *FileCollector) readFile(state *fileState) {
 
 // OnOutputSuccess 输出成功回调
 func (c *FileCollector) OnOutputSuccess(filePath string, uploadSize int64) {
-	c.filesMu.Lock()
-	if state, ok := c.files[filePath]; ok {
+	c.filesMu.RLock()
+	state, ok := c.files[filePath]
+	c.filesMu.RUnlock()
+	if ok {
+		state.mu.Lock()
 		state.uploadOffset += uploadSize
+		state.mu.Unlock()
 	}
-	c.filesMu.Unlock()
 }
 
 // tryDeletePendingFiles 尝试删除待删除的文件
@@ -417,7 +433,11 @@ func (c *FileCollector) tryDeletePendingFiles() {
 	for i := 1; i < len(fileInfos); i++ {
 		if fileState, ok := c.files[fileInfos[i].path]; ok {
 			// 读取了文件,且上传和读取的偏移量相同,则表示可以删除
-			if fileState.readOffset > 0 && fileState.readOffset == fileState.uploadOffset {
+			fileState.mu.Lock()
+			canDelete := fileState.readOffset > 0 && fileState.readOffset == fileState.uploadOffset
+			fileState.mu.Unlock()
+
+			if canDelete {
 				// 删除文件
 				err := os.Remove(fileState.path)
 				if err == nil {

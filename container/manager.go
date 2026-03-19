@@ -82,12 +82,12 @@ func (m *Manager) Handle(event docker.EventResult) {
 			return
 		}
 		if inspect.ID != "" {
-			flog.Infof("[ContainerManager] 发现新容器: %s (%s)", parseContainerName(inspect.Name), inspect.ID[:12])
+			flog.Infof("[ContainerManager] 发现新容器: %s (%s)", ParseContainerName(inspect.Name), inspect.ID[:12])
 			m.notifyAdd(inspect)
 		}
 	case "die", "destroy":
 		if c, ok := m.GetContainer(containerID); ok {
-			flog.Infof("[ContainerManager] 移除容器: %s (%s)", parseContainerName(c.Name), containerID[:12])
+			flog.Infof("[ContainerManager] 移除容器: %s (%s)", ParseContainerName(c.Name), containerID[:12])
 			m.notifyRemove(containerID)
 		}
 	}
@@ -139,14 +139,20 @@ func (m *Manager) startStatsCollector(ctx context.Context) {
 
 // collectStats 收集所有容器资源
 func (m *Manager) collectStats() {
+	var wg sync.WaitGroup
 	m.containers.Range(func(key, value interface{}) bool {
 		containerID := key.(string)
-		stat := m.Client.Container.Stats(containerID)
-		if stat.ContainerID != "" {
-			m.stats.Store(stat.ContainerID, stat)
-		}
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			stat := m.Client.Container.Stats(id)
+			if stat.ContainerID != "" {
+				m.stats.Store(stat.ContainerID, stat)
+			}
+		}(containerID)
 		return true
 	})
+	wg.Wait()
 }
 
 // GetStats 获取单个容器资源
@@ -180,8 +186,8 @@ func (m *Manager) Stop() {
 	flog.Infof("[ContainerManager] 容器管理器已停止")
 }
 
-// parseContainerName 解析容器名称
-func parseContainerName(name string) string {
+// ParseContainerName 解析容器名称（导出供其他包使用）
+func ParseContainerName(name string) string {
 	name = strings.TrimPrefix(name, "/")
 	if idx := strings.Index(name, "."); idx > 0 {
 		return name[:idx]
