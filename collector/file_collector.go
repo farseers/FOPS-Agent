@@ -237,7 +237,7 @@ func (c *FileCollector) handleEvents() {
 	for {
 		select {
 		case <-c.ctx.Done():
-			flog.Warningf("收到退出信号")
+			flog.Warningf("[watcher.Events]%s %s 退出信号", c.containerID, c.containerName)
 			return
 
 		case event, ok := <-c.watcher.Events:
