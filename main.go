@@ -36,7 +36,7 @@ func main() {
 		flog.Infof("运行在宿主机上,手动监听日志目录: %s", logCollector.WatchDir)
 
 		out := fileWatcherMgr.GetOutPut("log")
-		col := collector.NewFileCollector("本机", "宿主机", "fops-agent", logCollector.WatchDir, logCollector.FileExt, core.ProcessId, out)
+		col := collector.NewFileCollector("本机", "宿主机", "fops-agent", logCollector.WatchDir, logCollector.FileExt, core.ProcessId, logCollector.SerializeType, out)
 		go col.Start(context.Background())
 	}
 

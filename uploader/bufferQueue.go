@@ -6,7 +6,7 @@ import (
 
 type fileInfo struct {
 	filePath string   // 文件地址
-	data     []string // 文件数据(本次要上传的数据)
+	data     [][]byte // 文件数据(本次要上传的数据)
 	dataSize int64    // 数据大小(本次要上传的数据大小)
 }
 
@@ -29,7 +29,7 @@ func NewBufferQueue(maxSize int64) *bufferQueue {
 
 // Add 添加数据
 // 建议内部统一计算大小，防止与 GetAndClear 的切分逻辑不一致导致 curSize 误差
-func (q *bufferQueue) Add(filePath string, lines []string, lineSize int64) int64 {
+func (q *bufferQueue) Add(filePath string, lines [][]byte, lineSize int64) int64 {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -172,7 +172,7 @@ func (q *bufferQueue) PutBack(fileInfos map[string]*fileInfo) {
 	for filePath, oldInfo := range fileInfos {
 		if currentInfo, exists := q.fileInfos[filePath]; exists {
 			// 合并数据：旧数据在前，新数据在后
-			newData := make([]string, 0, len(oldInfo.data)+len(currentInfo.data))
+			newData := make([][]byte, 0, len(oldInfo.data)+len(currentInfo.data))
 			newData = append(newData, oldInfo.data...)
 			newData = append(newData, currentInfo.data...)
 

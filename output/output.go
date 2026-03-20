@@ -13,7 +13,7 @@ type Data struct {
 	// FilePath 文件路径
 	FilePath string
 	// Lines 内容行
-	Lines []string
+	Lines [][]byte
 	// CurSize 本次上传的大小
 	CurSize int64
 }

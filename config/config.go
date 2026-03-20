@@ -44,6 +44,8 @@ type CollectorConfig struct {
 	UploadInterval int `yaml:"UploadInterval"`
 	// BufferSizeMB 缓冲区大小（MB）
 	BufferSizeMB int64 `yaml:"BufferSizeMB"`
+	// SerializeType 序列化格式（json 或 messagePack）
+	SerializeType string `yaml:"SerializeType"`
 }
 
 // Load 从文件加载配置
@@ -82,6 +84,9 @@ func Load() *Config {
 		}
 		if cfg.Collectors[i].BufferSizeMB == 0 {
 			cfg.Collectors[i].BufferSizeMB = 10
+		}
+		if cfg.Collectors[i].SerializeType == "" {
+			cfg.Collectors[i].SerializeType = "json"
 		}
 	}
 

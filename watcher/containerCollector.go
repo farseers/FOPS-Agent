@@ -35,7 +35,7 @@ func NewContainerCollector(containerID, containerName string, pid int, cfg *conf
 	for _, cc := range cfg.Collectors {
 		// 使用全局上传器
 		out := outputs[cc.Name]
-		col := collector.NewFileCollector(cc.Name, containerID, containerName, cc.WatchDir, cc.FileExt, pid, out)
+		col := collector.NewFileCollector(cc.Name, containerID, containerName, cc.WatchDir, cc.FileExt, pid, cc.SerializeType, out)
 		w.collectors = append(w.collectors, col)
 	}
 	return w, nil

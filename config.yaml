@@ -19,6 +19,7 @@ Collectors:
     UploadURL: /flog/upload
     UploadInterval: 5
     BufferSizeMB: 10
+    SerializeType: messagePack
 
   # 链路追踪采集
   - Name: trace
@@ -26,4 +27,5 @@ Collectors:
     FileExt: trace
     UploadURL: /linkTrace/upload
     UploadInterval: 5
-    UufferSizeMB: 10
+    BufferSizeMB: 10
+    SerializeType: messagePack

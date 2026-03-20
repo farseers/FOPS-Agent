@@ -16,6 +16,7 @@ import (
 	"fops-agent/output"
 
 	"github.com/farseer-go/fs/flog"
+	"github.com/vmihailenco/msgpack/v5"
 )
 
 // HTTPUploader HTTP 上传器
@@ -23,6 +24,7 @@ type HTTPUploader struct {
 	name           string                   // 名称
 	uploadURL      string                   // 上传接口地址
 	uploadInterval int                      // 上传间隔
+	serializeType  string                   // 序列化格式：json 或 messagePack
 	client         *http.Client             // 上传client
 	buffer         *bufferQueue             // 缓冲区
 	callbacks      []output.SuccessCallback // collectorName -> callback 上传成功后的回调
@@ -40,7 +42,7 @@ type HTTPUploader struct {
 }
 
 // NewHTTPUploader 创建 HTTP 上传器
-func NewHTTPUploader(name string, uploadURL string, httpServerURL string, uploadInterval int, bufferSizeMB int64) *HTTPUploader {
+func NewHTTPUploader(name string, uploadURL string, httpServerURL string, uploadInterval int, bufferSizeMB int64, serializeType string) *HTTPUploader {
 	transport := &http.Transport{
 		MaxIdleConns:    100,
 		IdleConnTimeout: 90 * time.Second,
@@ -53,6 +55,7 @@ func NewHTTPUploader(name string, uploadURL string, httpServerURL string, upload
 		name:           name,
 		uploadURL:      httpServerURL + uploadURL,
 		uploadInterval: uploadInterval,
+		serializeType:  serializeType,
 		client: &http.Client{
 			Timeout:   10 * time.Second,
 			Transport: transport,
@@ -161,10 +164,25 @@ func (u *HTTPUploader) flush() {
 		return
 	}
 
-	// 构建 JSON
-	body := u.buildJSON(fileInfos)
+	// 根据序列化格式构建请求体
+	var body []byte
+	var contentType string
+	if u.serializeType == "messagePack" {
+		var err error
+		body, err = u.buildMsgPack(fileInfos, line)
+		if err != nil {
+			flog.Warningf("[HTTPUploader:%s] 构建 MessagePack 失败: %v", u.name, err)
+			u.buffer.PutBack(fileInfos)
+			return
+		}
+		contentType = "application/x-msgpack"
+	} else {
+		body = u.buildJSON(fileInfos)
+		contentType = "application/json"
+	}
+
 	// 上传
-	if err := u.upload(body); err != nil {
+	if err := u.upload(body, contentType); err != nil {
 		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据，%.2f MB: %v", u.name, line, float64(size)/1024/1024, err)
 
 		// 将数据放回缓冲区，避免数据丢失
@@ -190,6 +208,31 @@ func (u *HTTPUploader) flush() {
 	}
 }
 
+// buildMsgPack 构建 MessagePack 请求体
+func (u *HTTPUploader) buildMsgPack(fileInfos map[string]*fileInfo, lineCount int) ([]byte, error) {
+	keys := make([]string, 0, len(fileInfos))
+	for k := range fileInfos {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	// 使用 msgpack.RawMessage 避开反序列化
+	// 这里的 items 只是保存了指向原始二进制数据的“指针/引用”
+	items := make([]msgpack.RawMessage, 0, lineCount)
+	for _, k := range keys {
+		for _, dataBytes := range fileInfos[k].data {
+			// dataBytes 本身就是 []byte (从 readMsgPackFile 读出的 payload)
+			// 直接强制类型转换为 RawMessage，不产生内存拷贝，不进行 Unmarshal
+			items = append(items, msgpack.RawMessage(dataBytes))
+		}
+	}
+
+	// 最终打包：List 字段会被编码成数组头，而 items 内部的二进制数据会被直接 Copy 进去
+	return msgpack.Marshal(map[string]any{
+		"List": items,
+	})
+}
+
 // buildJSON 构建 JSON 请求体
 func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
 	// 对 key 排序，保证同批次内文件顺序稳定
@@ -210,7 +253,7 @@ func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
 			}
 			first = false
 			if json.Valid([]byte(line)) {
-				buf.WriteString(line)
+				buf.Write(line)
 			} else {
 				escaped, _ := json.Marshal(line)
 				buf.Write(escaped)
@@ -223,13 +266,13 @@ func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
 }
 
 // upload 执行上传
-func (u *HTTPUploader) upload(body []byte) error {
+func (u *HTTPUploader) upload(body []byte, contentType string) error {
 	req, err := http.NewRequest("POST", u.uploadURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	resp, err := u.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("请求失败: %w", err)

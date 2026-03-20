@@ -30,7 +30,7 @@ func NewCollectorManager(cfg *config.Config) *CollectorManager {
 
 	// 预创建全局上传器（每个 collector 一个）
 	for _, cc := range cfg.Collectors {
-		m.outputs[cc.Name] = uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB)
+		m.outputs[cc.Name] = uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB, cc.SerializeType)
 		// 启动所有上传器
 		m.outputs[cc.Name].Start()
 	}

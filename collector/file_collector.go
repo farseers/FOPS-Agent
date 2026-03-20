@@ -3,7 +3,9 @@ package collector
 import (
 	"bufio"
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -27,6 +29,7 @@ type FileCollector struct {
 	watchDir      string            // 配置文件定义的目录
 	actualPath    string            // 实际要监听的目录
 	fileExt       string            // 监听的文件扩展名
+	serializeType string            // 序列化格式（json 或 messagePack）
 	pid           int               // 容器在主机的进程ID
 	watcher       *fsnotify.Watcher // 文件监听客户端
 	output        output.Output     // 上传器
@@ -58,13 +61,14 @@ type fileInfo struct {
 }
 
 // NewFileCollector 创建文件采集器
-func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, out output.Output) *FileCollector {
+func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, serializeType string, out output.Output) *FileCollector {
 	fc := &FileCollector{
 		name:          name,
 		containerID:   containerID,
 		containerName: containerName,
 		watchDir:      watchDir,
 		fileExt:       fileExt,
+		serializeType: serializeType,
 		pid:           pid,
 		output:        out,
 		files:         make(map[string]*fileState),
@@ -330,9 +334,17 @@ func (c *FileCollector) handleFileWrite(filePath string) {
 	c.readFile(state)
 }
 
-// readFile 读取文件内容
+// readFile 读取文件内容（按序列化格式分发）
 func (c *FileCollector) readFile(state *fileState) {
-	// 打开文件
+	if c.serializeType == "messagePack" {
+		c.readMsgPackFile(state)
+	} else {
+		c.readJSONFile(state)
+	}
+}
+
+// readJSONFile 按行读取 JSON 文本文件（原有逻辑）
+func (c *FileCollector) readJSONFile(state *fileState) {
 	file, err := os.Open(state.path)
 	if err != nil {
 		flog.Warningf("[%s:%s] 打开文件失败: %v", c.containerName, c.name, err)
@@ -340,12 +352,10 @@ func (c *FileCollector) readFile(state *fileState) {
 	}
 	defer file.Close()
 
-	// 持锁读取并更新偏移量
 	state.mu.Lock()
 	offset := state.readOffset
 	state.mu.Unlock()
 
-	// 定位到偏移量位置（字节）
 	if offset > 0 {
 		if _, err = file.Seek(offset, 0); err != nil {
 			flog.Warningf("[%s:%s] 定位文件失败: %v, 重置偏移量为0", c.containerName, c.name, err)
@@ -356,27 +366,20 @@ func (c *FileCollector) readFile(state *fileState) {
 		}
 	}
 
-	// 使用 bufio.Reader 读取，避免 Scanner 的行长度限制
-	var lines []string
+	var lines [][]byte
 	var bytesRead int64
 
 	reader := bufio.NewReader(file)
-
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
-			break // EOF 或其他错误
+			break
 		}
-
-		// 统计读取的字节数（原始字节，包含换行符）
 		bytesRead += int64(len(line))
-
-		// 去掉换行符
 		line = strings.TrimSuffix(line, "\n")
 		line = strings.TrimSuffix(line, "\r")
-
 		if line != "" {
-			lines = append(lines, line)
+			lines = append(lines, []byte(line))
 		}
 	}
 
@@ -384,26 +387,92 @@ func (c *FileCollector) readFile(state *fileState) {
 		return
 	}
 
-	// 更新偏移量（字节）
 	state.mu.Lock()
 	state.readOffset += bytesRead
 	state.mu.Unlock()
 
-	// 发送到输出
 	if c.output != nil {
-		data := &output.Data{
+		c.output.Write(&output.Data{
 			ContainerID:   c.containerID,
 			ContainerName: c.containerName,
 			AppName:       c.appName,
 			FilePath:      state.path,
 			Lines:         lines,
 			CurSize:       bytesRead,
-		}
-
-		c.output.Write(data)
+		})
 	}
 
 	flog.Debugf("[%s:%s] %s 读取 %d 行, %.2f MB", c.containerName, c.name, state.path, len(lines), float64(bytesRead)/1024/1024)
+}
+
+// readMsgPackFile 按「4字节长度前缀 + payload」分帧读取 msgpack 二进制文件。
+// batchFileWriter 在 SerializeMessagePack 模式下写入格式为：
+//
+//	[uint32 BE: N][N bytes msgpack payload]
+//
+// 直接按行读取会被 payload 内部的 0x0A 字节截断，必须用此分帧协议。
+func (c *FileCollector) readMsgPackFile(state *fileState) {
+	file, err := os.Open(state.path)
+	if err != nil {
+		flog.Warningf("[%s:%s] 打开文件失败: %v", c.containerName, c.name, err)
+		return
+	}
+	defer file.Close()
+
+	state.mu.Lock()
+	offset := state.readOffset
+	state.mu.Unlock()
+
+	if offset > 0 {
+		if _, err = file.Seek(offset, 0); err != nil {
+			flog.Warningf("[%s:%s] 定位文件失败: %v, 重置偏移量为0", c.containerName, c.name, err)
+			state.mu.Lock()
+			state.readOffset = 0
+			state.mu.Unlock()
+		}
+	}
+
+	var lines [][]byte
+	var bytesRead int64
+
+	for {
+		// 读取 4 字节长度头
+		var lenBuf [4]byte
+		if _, err := io.ReadFull(file, lenBuf[:]); err != nil {
+			break // EOF 或不足 4 字节，等待下次写入
+		}
+		payloadLen := binary.BigEndian.Uint32(lenBuf[:])
+
+		// 按长度精确读取 payload
+		payload := make([]byte, payloadLen)
+		if _, err := io.ReadFull(file, payload); err != nil {
+			break // payload 尚未写完，下次继续
+		}
+
+		bytesRead += int64(4 + payloadLen)
+		lines = append(lines, payload)
+	}
+
+	if len(lines) == 0 {
+		return
+	}
+
+	state.mu.Lock()
+	state.readOffset += bytesRead
+	state.mu.Unlock()
+
+	if c.output != nil {
+		c.output.Write(&output.Data{
+			ContainerID:   c.containerID,
+			ContainerName: c.containerName,
+			AppName:       c.appName,
+			FilePath:      state.path,
+			Lines:         lines,
+			CurSize:       bytesRead,
+		})
+	}
+
+	flog.Debugf("[%s:%s] %s 读取 %d 条msgpack记录, %.2f MB", c.containerName, c.name, state.path, len(lines), float64(bytesRead)/1024/1024)
 }
 
 // OnOutputSuccess 输出成功回调
