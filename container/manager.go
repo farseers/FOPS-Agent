@@ -167,7 +167,7 @@ func (m *Manager) GetStats(containerID string) (docker.DockerStatsVO, bool) {
 // GetAllStats 获取所有容器资源
 func (m *Manager) GetAllStats() collections.List[docker.DockerStatsVO] {
 	result := collections.NewList[docker.DockerStatsVO]()
-	m.stats.Range(func(key, value interface{}) bool {
+	m.stats.Range(func(key, value any) bool {
 		result.Add(value.(docker.DockerStatsVO))
 		return true
 	})
@@ -179,7 +179,7 @@ func (m *Manager) Stop() {
 	if m.statsCancel != nil {
 		m.statsCancel()
 	}
-	m.containers.Range(func(key, value interface{}) bool {
+	m.containers.Range(func(key, value any) bool {
 		m.containers.Delete(key)
 		return true
 	})

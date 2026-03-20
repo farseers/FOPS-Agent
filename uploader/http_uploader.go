@@ -163,7 +163,6 @@ func (u *HTTPUploader) flush() {
 
 	// 构建 JSON
 	body := u.buildJSON(fileInfos)
-
 	// 上传
 	if err := u.upload(body); err != nil {
 		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据，%.2f MB: %v", u.name, line, float64(size)/1024/1024, err)
