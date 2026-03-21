@@ -44,8 +44,9 @@ type HTTPUploader struct {
 // NewHTTPUploader 创建 HTTP 上传器
 func NewHTTPUploader(name string, uploadURL string, httpServerURL string, uploadInterval int, bufferSizeMB int64, serializeType string) *HTTPUploader {
 	transport := &http.Transport{
-		MaxIdleConns:    100,
-		IdleConnTimeout: 90 * time.Second,
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     30 * time.Second, // 短于服务端/nginx 的 keep-alive 超时（通常 60-75s），避免复用僵尸连接
 	}
 	if strings.HasPrefix(httpServerURL, "https://") {
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
