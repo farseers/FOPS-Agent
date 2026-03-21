@@ -435,6 +435,8 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 	var lines [][]byte
 	var bytesRead int64
 
+	const maxPayloadSize = 64 * 1024 * 1024 // 单条 payload 上限 64 MB，防止格式错误导致内存暴涨
+
 	for {
 		// 读取 4 字节长度头
 		var lenBuf [4]byte
@@ -442,6 +444,12 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 			break // EOF 或不足 4 字节，等待下次写入
 		}
 		payloadLen := binary.BigEndian.Uint32(lenBuf[:])
+
+		// 校验 payload 长度合法性：0 或超过上限说明文件格式不是 messagePack，立即停止
+		if payloadLen == 0 || payloadLen > maxPayloadSize {
+			flog.Warningf("[%s:%s] %s 检测到非法帧长度 %d，文件可能不是 messagePack 格式，停止解析", c.containerName, c.name, state.path, payloadLen)
+			break
+		}
 
 		// 按长度精确读取 payload
 		payload := make([]byte, payloadLen)
