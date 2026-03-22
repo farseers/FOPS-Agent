@@ -46,6 +46,8 @@ type CollectorConfig struct {
 	BufferSizeMB int64 `yaml:"BufferSizeMB"`
 	// SerializeType 序列化格式（json 或 messagePack）
 	SerializeType string `yaml:"SerializeType"`
+	// CompressThresholdKB 压缩阈值（KB）。上传 body 超过此大小时启用 zstd 压缩。默认 1；0 表示禁用压缩
+	CompressThresholdKB int64 `yaml:"CompressThresholdKB"`
 }
 
 // Load 从文件加载配置
@@ -87,6 +89,11 @@ func Load() *Config {
 		}
 		if cfg.Collectors[i].SerializeType == "" {
 			cfg.Collectors[i].SerializeType = "json"
+		}
+		// CompressThresholdKB == 0 → 使用默认 128 KB 阈值；负值或显式 0 不会走到这里
+		// 由于 YAML 缺省为 0，这里将其解释为"未配置 → 使用默认 1"
+		if cfg.Collectors[i].CompressThresholdKB == 0 {
+			cfg.Collectors[i].CompressThresholdKB = 128
 		}
 	}
 

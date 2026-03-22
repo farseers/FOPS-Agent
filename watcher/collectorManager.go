@@ -12,6 +12,7 @@ import (
 	"github.com/farseer-go/docker"
 	"github.com/farseer-go/fs/flog"
 )
+
 // CollectorManager 文件监视器管理器
 // 订阅容器事件，管理每个容器的文件监视器
 type CollectorManager struct {
@@ -30,7 +31,7 @@ func NewCollectorManager(cfg *config.Config) *CollectorManager {
 
 	// 预创建全局上传器（每个 collector 一个）
 	for _, cc := range cfg.Collectors {
-		m.outputs[cc.Name] = uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB, cc.SerializeType)
+		m.outputs[cc.Name] = uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB, cc.SerializeType, cc.CompressThresholdKB)
 		// 启动所有上传器
 		m.outputs[cc.Name].Start()
 	}

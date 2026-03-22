@@ -16,19 +16,22 @@ import (
 	"fops-agent/output"
 
 	"github.com/farseer-go/fs/flog"
+	"github.com/klauspost/compress/zstd"
 	"github.com/vmihailenco/msgpack/v5"
 )
 
 // HTTPUploader HTTP 上传器
 type HTTPUploader struct {
-	name           string                   // 名称
-	uploadURL      string                   // 上传接口地址
-	uploadInterval int                      // 上传间隔
-	serializeType  string                   // 序列化格式：json 或 messagePack
-	client         *http.Client             // 上传client
-	buffer         *bufferQueue             // 缓冲区
-	callbacks      []output.SuccessCallback // collectorName -> callback 上传成功后的回调
-	cbMu           sync.RWMutex
+	name                   string                   // 名称
+	uploadURL              string                   // 上传接口地址
+	uploadInterval         int                      // 上传间隔
+	serializeType          string                   // 序列化格式：json 或 messagePack
+	compressThresholdBytes int64                    // zstd 压缩阈值（字节），0 表示禁用
+	zstdEncoder            *zstd.Encoder            // zstd 编码器（可并发复用）
+	client                 *http.Client             // 上传client
+	buffer                 *bufferQueue             // 缓冲区
+	callbacks              []output.SuccessCallback // collectorName -> callback 上传成功后的回调
+	cbMu                   sync.RWMutex
 
 	lastFailTime time.Time // 上次上传失败时间
 	failMu       sync.RWMutex
@@ -42,7 +45,7 @@ type HTTPUploader struct {
 }
 
 // NewHTTPUploader 创建 HTTP 上传器
-func NewHTTPUploader(name string, uploadURL string, httpServerURL string, uploadInterval int, bufferSizeMB int64, serializeType string) *HTTPUploader {
+func NewHTTPUploader(name string, uploadURL string, httpServerURL string, uploadInterval int, bufferSizeMB int64, serializeType string, compressThresholdKB int64) *HTTPUploader {
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 4,
@@ -52,11 +55,21 @@ func NewHTTPUploader(name string, uploadURL string, httpServerURL string, upload
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
 
+	// 初始化 zstd 编码器（Speed 级别，兼顾压缩率与性能）
+	zstdEnc, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+
+	var thresholdBytes int64
+	if compressThresholdKB > 0 {
+		thresholdBytes = compressThresholdKB * 1024
+	}
+
 	return &HTTPUploader{
-		name:           name,
-		uploadURL:      httpServerURL + uploadURL,
-		uploadInterval: uploadInterval,
-		serializeType:  serializeType,
+		name:                   name,
+		uploadURL:              httpServerURL + uploadURL,
+		uploadInterval:         uploadInterval,
+		serializeType:          serializeType,
+		compressThresholdBytes: thresholdBytes,
+		zstdEncoder:            zstdEnc,
 		client: &http.Client{
 			Timeout:   10 * time.Second,
 			Transport: transport,
@@ -160,7 +173,7 @@ func (u *HTTPUploader) flush() {
 	}
 
 	// 获取缓冲区数据并清空
-	fileInfos, size, line := u.buffer.GetAndClear(2)
+	fileInfos, _, line := u.buffer.GetAndClear(u.buffer.maxSize)
 	if len(fileInfos) == 0 {
 		return
 	}
@@ -183,8 +196,9 @@ func (u *HTTPUploader) flush() {
 	}
 
 	// 上传
-	if err := u.upload(body, contentType); err != nil {
-		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据，%.2f MB: %v", u.name, line, float64(size)/1024/1024, err)
+	compressedBytes, err := u.upload(body, contentType)
+	if err != nil {
+		flog.Warningf("[HTTPUploader:%s] 上传失败 %d 行数据，%.2f KB: %v", u.name, line, float64(len(body))/1024, err)
 
 		// 将数据放回缓冲区，避免数据丢失
 		u.buffer.PutBack(fileInfos)
@@ -196,7 +210,7 @@ func (u *HTTPUploader) flush() {
 		return
 	}
 
-	flog.Infof("[HTTPUploader:%s] 上传成功 %d 行数据，%.2f MB", u.name, line, float64(size)/1024/1024)
+	flog.Infof("[HTTPUploader:%s] 上传成功 %d 行数据，zstd 压缩 %.2f MB → %.2f MB (%.0f%%)", u.name, line, float64(compressedBytes)/1024/1024, float64(len(body))/1024/1024, float64(compressedBytes)*100/float64(len(body)))
 
 	// 回调通知上传成功
 	u.cbMu.RLock()
@@ -267,24 +281,40 @@ func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
 }
 
 // upload 执行上传
-func (u *HTTPUploader) upload(body []byte, contentType string) error {
-	req, err := http.NewRequest("POST", u.uploadURL, bytes.NewReader(body))
+func (u *HTTPUploader) upload(body []byte, contentType string) (float64, error) {
+	uploadBody := body
+	compressed := false
+
+	compressedBytes := float64(len(body))
+	// 超过阈值且阈值已启用时，使用 zstd 压缩
+	if u.compressThresholdBytes > 0 && int64(len(body)) >= u.compressThresholdBytes {
+		uploadBody = u.zstdEncoder.EncodeAll(body, make([]byte, 0, len(body)/2))
+		compressed = true
+		compressedBytes = float64(len(uploadBody))
+		//flog.Debugf("[HTTPUploader:%s] zstd 压缩 %.2f MB → %.2f MB (%.0f%%)", u.name, float64(len(body))/1024/1024, compressedBytes/1024/1024, float64(len(uploadBody))*100/float64(len(body)))
+	}
+
+	req, err := http.NewRequest("POST", u.uploadURL, bytes.NewReader(uploadBody))
 	if err != nil {
-		return fmt.Errorf("创建请求失败: %w", err)
+		return compressedBytes, fmt.Errorf("创建请求失败: %w", err)
 	}
 
 	req.Header.Set("Content-Type", contentType)
+	if compressed {
+		req.Header.Set("Content-Encoding", "zstd")
+	}
+
 	resp, err := u.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("请求失败: %w", err)
+		return compressedBytes, fmt.Errorf("请求失败: %w", err)
 	}
 	defer resp.Body.Close()
 	// 读取并丢弃响应体，确保连接可被复用
 	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("服务端返回错误: %d", resp.StatusCode)
+		return compressedBytes, fmt.Errorf("服务端返回错误: %d", resp.StatusCode)
 	}
 
-	return nil
+	return compressedBytes, nil
 }

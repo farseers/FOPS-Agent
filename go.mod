@@ -12,6 +12,7 @@ require (
 	github.com/farseer-go/utils v0.17.3
 	github.com/farseer-go/webapi v0.17.3
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/klauspost/compress v1.18.5
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 )
 

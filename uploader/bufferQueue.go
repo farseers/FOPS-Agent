@@ -61,8 +61,8 @@ func (q *bufferQueue) Add(filePath string, lines [][]byte, lineSize int64) int64
 }
 
 // GetAndClear 获取缓冲区数据并清空
-// popSizeMB: 限制每次取出的最大数据量(MB)。如果 <= 0 则取出全部。
-func (q *bufferQueue) GetAndClear(popSizeMB int64) (map[string]*fileInfo, int64, int) {
+// popSizeMB: 限制每次取出的最大数据量(字节)。如果 <= 0 则取出全部。
+func (q *bufferQueue) GetAndClear(limitBytes int64) (map[string]*fileInfo, int64, int) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -70,7 +70,6 @@ func (q *bufferQueue) GetAndClear(popSizeMB int64) (map[string]*fileInfo, int64,
 		return nil, 0, 0
 	}
 
-	limitBytes := popSizeMB * 1024 * 1024
 	poppedInfos := make(map[string]*fileInfo)
 	var poppedSize int64 = 0
 	poppedLine := 0

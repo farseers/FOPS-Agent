@@ -20,6 +20,7 @@ Collectors:
     UploadInterval: 5
     BufferSizeMB: 10
     SerializeType: messagePack
+    CompressThresholdKB: 128
 
   # 链路追踪采集
   - Name: trace
@@ -29,3 +30,4 @@ Collectors:
     UploadInterval: 5
     BufferSizeMB: 10
     SerializeType: messagePack
+    CompressThresholdKB: 128
