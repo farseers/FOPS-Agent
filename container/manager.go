@@ -32,7 +32,7 @@ type Manager struct {
 // NewManager 创建容器管理器
 func NewManager(statsInterval int) *Manager {
 	return &Manager{
-		Client:        docker.NewClient(),
+		Client:        docker.DefaultClient,
 		statsInterval: time.Duration(statsInterval) * time.Second,
 	}
 }
