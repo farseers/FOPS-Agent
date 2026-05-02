@@ -13,6 +13,7 @@ type fileInfo struct {
 // bufferQueue 缓冲队列
 type bufferQueue struct {
 	mu        sync.Mutex           // 锁
+	cond      *sync.Cond           // 背压条件变量，flush 成功后广播唤醒
 	fileInfos map[string]*fileInfo // filePath -> fileInfo 文件本次要上传的内容和大小（字节）
 	curSize   int64                // 当前数据大小（字节）
 	maxSize   int64                // 最大大小（字节）,当curSize超过maxSize时,需要立即取走数据
@@ -21,10 +22,26 @@ type bufferQueue struct {
 
 // NewBufferQueue 创建缓冲队列
 func NewBufferQueue(maxSize int64) *bufferQueue {
-	return &bufferQueue{
+	q := &bufferQueue{
 		fileInfos: make(map[string]*fileInfo),
 		maxSize:   maxSize,
 	}
+	q.cond = sync.NewCond(&q.mu)
+	return q
+}
+
+// WaitUntilBelowMax 阻塞直到缓冲区低于 maxSize。由采集侧在写入前调用，实现背压。
+func (q *bufferQueue) WaitUntilBelowMax() {
+	q.mu.Lock()
+	for q.curSize >= q.maxSize {
+		q.cond.Wait()
+	}
+	q.mu.Unlock()
+}
+
+// NotifyFlushed 通知所有等待的 goroutine 缓冲区已清空，可以继续写入。
+func (q *bufferQueue) NotifyFlushed() {
+	q.cond.Broadcast()
 }
 
 // Add 添加数据

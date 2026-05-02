@@ -107,21 +107,12 @@ func (u *HTTPUploader) Stop() {
 	u.wg.Wait()
 }
 
-// Write 写入数据
+// Write 写入数据。缓冲区满时会阻塞，直到 flush 成功腾出空间，实现背压。
 func (u *HTTPUploader) Write(data *output.Data) {
-	totalSize := u.buffer.Add(data.FilePath, data.Lines, data.CurSize)
+	// 缓冲区已满时阻塞采集侧，等待 flush 成功后唤醒
+	u.buffer.WaitUntilBelowMax()
 
-	// 如果超过缓冲区大小，检查是否可以上传
-	if totalSize >= u.buffer.maxSize {
-		// 检查上次失败后是否已过5秒
-		u.failMu.RLock()
-		lastFail := u.lastFailTime
-		u.failMu.RUnlock()
-
-		if time.Since(lastFail) >= 5*time.Second {
-			go u.flush()
-		}
-	}
+	u.buffer.Add(data.FilePath, data.Lines, data.CurSize)
 }
 
 // RegisterCallback 注册回调
@@ -211,6 +202,9 @@ func (u *HTTPUploader) flush() {
 	}
 
 	flog.Infof("[HTTPUploader:%s] 上传成功 %d 行数据，zstd 压缩 %.2f MB → %.2f MB (%.0f%%)", u.name, line, float64(compressedBytes)/1024/1024, float64(len(body))/1024/1024, float64(compressedBytes)*100/float64(len(body)))
+
+	// 上传成功，缓冲区已腾出空间，唤醒被背压阻塞的采集侧
+	u.buffer.NotifyFlushed()
 
 	// 回调通知上传成功
 	u.cbMu.RLock()
