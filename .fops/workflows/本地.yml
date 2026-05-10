@@ -31,7 +31,7 @@ jobs:
           - go work edit -replace github.com/farseer-go/tasks=../farseer-go/tasks
           - go work edit -replace github.com/farseer-go/monitor=../farseer-go/monitor
           - go mod download
-          - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./fops-agent -ldflags="-w -s" .
+          - GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o ./fops-agent -ldflags="-w -s -X 'github.com/farseer-go/fs/core.AppVersion=v${build_number}'" .
 
       - name: 打包镜像
         uses: dockerBuild@v1
