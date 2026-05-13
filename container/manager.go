@@ -117,24 +117,64 @@ func (m *Manager) startStatsCollector(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	m.statsCancel = cancel
 
-	// 启动时立即同步收集一次
+	// 启动时先对账一次，再采集
+	m.reconcileContainers()
 	m.collectStats()
 
 	go func() {
 		ticker := time.NewTicker(m.statsInterval)
 		defer ticker.Stop()
+		reconcileTick := 0
 
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				// 每 10 轮对账一次，兜底 docker event 丢失
+				reconcileTick++
+				if reconcileTick >= 10 {
+					m.reconcileContainers()
+					reconcileTick = 0
+				}
 				m.collectStats()
 			}
 		}
 	}()
 
 	flog.Infof("[ContainerManager] 资源收集器已启动，间隔: %v", m.statsInterval)
+}
+
+// reconcileContainers 对账 docker ps 与本地 map，补齐丢失、清理幽灵
+func (m *Manager) reconcileContainers() {
+	containers, err := m.Client.Container.List("", nil)
+	if err != nil {
+		flog.Warningf("[ContainerManager] reconcile 获取容器列表失败: %v", err)
+		return
+	}
+
+	seen := make(map[string]struct{}, containers.Count())
+	containers.Foreach(func(item *docker.Container) {
+		seen[item.ID] = struct{}{}
+		if _, ok := m.containers.Load(item.ID); ok {
+			return
+		}
+		inspect, err := m.Client.Container.Inspect(item.ID)
+		if err != nil || inspect.ID == "" {
+			return
+		}
+		flog.Warningf("[ContainerManager] reconcile 补齐丢失容器: %s (%s)", ParseContainerName(inspect.Name), inspect.ID[:12])
+		m.notifyAdd(inspect)
+	})
+
+	m.containers.Range(func(key, value any) bool {
+		id := key.(string)
+		if _, ok := seen[id]; !ok {
+			flog.Warningf("[ContainerManager] reconcile 清理幽灵容器: %s", id[:12])
+			m.notifyRemove(id)
+		}
+		return true
+	})
 }
 
 // collectStats 收集所有容器资源
