@@ -7,7 +7,6 @@ Container:
     - "portainer-agent"
     - "portainer-ce"
     - "registry"
-    - "traefik"
     - "FOPS-"
 
 # 采集器配置
