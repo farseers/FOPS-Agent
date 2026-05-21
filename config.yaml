@@ -8,6 +8,7 @@ Container:
     - "portainer-ce"
     - "registry"
     - "FOPS-"
+    - "gitea-"
 
 # 采集器配置
 Collectors:
