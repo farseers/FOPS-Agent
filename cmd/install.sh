@@ -2,13 +2,14 @@
 
 # 定义参数
 APP_NAME="fops-agent"
-VERSION="v0.1.0"
+VERSION="v1.0.0"
 INSTALL_DIR="/usr/local/bin"
 SERVICE_FILE="/etc/systemd/system/${APP_NAME}.service"
 
 # ====== 参数解析 ======
 # 需要设置的环境变量（格式: VAR_NAME="value"）
 ENV_VARS=()
+CONFIG_NAME=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env)
@@ -27,11 +28,25 @@ while [[ $# -gt 0 ]]; do
       fi
       ;;
     *)
-      echo "未知参数: $1" >&2
-      exit 1
+      if [[ -z "${CONFIG_NAME}" ]]; then
+        CONFIG_NAME="$1"
+        shift
+      else
+        echo "未知参数: $1" >&2
+        exit 1
+      fi
       ;;
   esac
 done
+
+CONFIG_FILE="config.yaml"
+if [[ -n "${CONFIG_NAME}" ]]; then
+  if [[ ! "${CONFIG_NAME}" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "错误: 配置名只能包含字母、数字、点、下划线和中划线" >&2
+    exit 1
+  fi
+  CONFIG_FILE="config-${CONFIG_NAME}.yaml"
+fi
 
 # 检查 root 权限
 if [ "$(id -u)" != "0" ]; then
@@ -49,8 +64,8 @@ fi
 
 
 # 下载配置文件
-echo "正在下载 config.yaml..."
-DOWNLOAD_URL="https://github.com/farseers/FOPS-Agent/releases/download/${VERSION}/config.yaml"
+echo "正在下载 ${CONFIG_FILE}..."
+DOWNLOAD_URL="https://github.com/farseers/FOPS-Agent/releases/download/${VERSION}/${CONFIG_FILE}"
 if ! wget -O "${INSTALL_DIR}/config.yaml" "${DOWNLOAD_URL}"; then
    echo "下载配置失败，请检查版本号和网络连接" >&2
    exit 1

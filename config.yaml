@@ -64,6 +64,7 @@ Collectors:
     AppName: traefik
     ContainerNames:
       - "traefik"
+      - "traefik-worker"
     WatchDir: /var/log/traefik/
     FileExt: log
     UploadURL: /flog/proxyLog
