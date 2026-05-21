@@ -445,9 +445,12 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 		}
 		payloadLen := binary.BigEndian.Uint32(lenBuf[:])
 
-		// 校验 payload 长度合法性：0 或超过上限说明文件格式不是 messagePack，立即停止
+		// 校验 payload 长度合法性：0 或超过上限说明文件格式不是 messagePack，跳过到文件末尾
 		if payloadLen == 0 || payloadLen > maxPayloadSize {
-			flog.Warningf("[%s:%s] %s 检测到非法帧长度 %d，文件可能不是 messagePack 格式，停止解析", c.containerName, c.name, state.path, payloadLen)
+			flog.Warningf("[%s:%s] %s 检测到非法帧长度 %d，文件可能不是 messagePack 格式，跳过到文件末尾", c.containerName, c.name, state.path, payloadLen)
+			if info, statErr := file.Stat(); statErr == nil {
+				bytesRead = info.Size() - offset
+			}
 			break
 		}
 
