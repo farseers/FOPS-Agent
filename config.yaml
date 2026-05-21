@@ -43,7 +43,7 @@ Collectors:
     UploadURL: /flog/proxyLog
     UploadInterval: 5
     BufferSizeMB: 10
-    SerializeType: txt
+    SerializeType: json
     CompressThresholdKB: 128
 
   # traefik容器日志采集示例（Swarm 下优先匹配 service name）
