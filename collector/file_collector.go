@@ -22,17 +22,18 @@ import (
 
 // FileCollector 文件采集器
 type FileCollector struct {
-	name          string            // 配置名称
-	containerID   string            // 容器ID
-	containerName string            // 容器名称
-	appName       string            // 应用名称
-	watchDir      string            // 配置文件定义的目录
-	actualPath    string            // 实际要监听的目录
-	fileExt       string            // 监听的文件扩展名
-	serializeType string            // 序列化格式（json 或 messagePack）
-	pid           int               // 容器在主机的进程ID
-	watcher       *fsnotify.Watcher // 文件监听客户端
-	output        output.Output     // 上传器
+	name           string            // 配置名称
+	containerID    string            // 容器ID
+	containerName  string            // 容器名称
+	appName        string            // 应用名称
+	watchDir       string            // 配置文件定义的目录
+	actualPath     string            // 实际要监听的目录
+	fileExt        string            // 监听的文件扩展名
+	serializeType  string            // 序列化格式（json 或 messagePack）
+	readBatchBytes int64             // 单批读取大小上限
+	pid            int               // 容器在主机的进程ID
+	watcher        *fsnotify.Watcher // 文件监听客户端
+	output         output.Output     // 上传器
 
 	// 文件状态管理
 	filesMu sync.RWMutex
@@ -65,19 +66,23 @@ type fileInfo struct {
 }
 
 // NewFileCollector 创建文件采集器
-func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, serializeType string, out output.Output) *FileCollector {
+func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, serializeType string, readBatchBytes int64, out output.Output) *FileCollector {
+	if readBatchBytes <= 0 {
+		readBatchBytes = 10 * 1024 * 1024
+	}
 	fc := &FileCollector{
-		name:          name,
-		containerID:   containerID,
-		containerName: containerName,
-		watchDir:      watchDir,
-		fileExt:       fileExt,
-		serializeType: serializeType,
-		pid:           pid,
-		output:        out,
-		files:         make(map[string]*fileState),
-		dirtyFiles:    make(map[string]struct{}),
-		dirtyCh:       make(chan struct{}, 1),
+		name:           name,
+		containerID:    containerID,
+		containerName:  containerName,
+		watchDir:       watchDir,
+		fileExt:        fileExt,
+		serializeType:  serializeType,
+		readBatchBytes: readBatchBytes,
+		pid:            pid,
+		output:         out,
+		files:          make(map[string]*fileState),
+		dirtyFiles:     make(map[string]struct{}),
+		dirtyCh:        make(chan struct{}, 1),
 	}
 	// 注册回调到全局上传器
 	if out != nil {
@@ -286,7 +291,9 @@ func (c *FileCollector) dirtyWorker() {
 		case <-c.dirtyCh:
 			c.readDirtyFiles()
 		case <-ticker.C:
+			// 扫描目录中有新增内容的文件，作为事件丢失时的兜底
 			c.scanChangedFiles()
+			// 读取当前已标记 dirty 的文件
 			c.readDirtyFiles()
 		}
 	}
@@ -414,7 +421,34 @@ func (c *FileCollector) readFile(state *fileState) {
 	}
 }
 
-// readJSONFile 按行读取 JSON 文本文件（原有逻辑）
+func (c *FileCollector) flushReadBatch(state *fileState, lines [][]byte, bytesRead int64, unit string) {
+	if bytesRead <= 0 {
+		return
+	}
+
+	state.mu.Lock()
+	state.readOffset += bytesRead
+	state.mu.Unlock()
+
+	if len(lines) == 0 {
+		return
+	}
+
+	if c.output != nil {
+		c.output.Write(&output.Data{
+			ContainerID:   c.containerID,
+			ContainerName: c.containerName,
+			AppName:       c.appName,
+			FilePath:      state.path,
+			Lines:         lines,
+			CurSize:       bytesRead,
+		})
+	}
+
+	flog.Debugf("[%s:%s] %s 读取 %d%s, %.2f MB", c.containerName, c.name, state.path, len(lines), unit, float64(bytesRead)/1024/1024)
+}
+
+// readJSONFile 按行分批读取 JSON 文本文件
 func (c *FileCollector) readJSONFile(state *fileState) {
 	file, err := os.Open(state.path)
 	if err != nil {
@@ -438,7 +472,8 @@ func (c *FileCollector) readJSONFile(state *fileState) {
 	}
 
 	var lines [][]byte
-	var bytesRead int64
+	// batchBytes 统计当前批次实际读取的文件字节数，用于限制单批内存并推进 readOffset。
+	var batchBytes int64
 
 	reader := bufio.NewReader(file)
 	for {
@@ -446,34 +481,23 @@ func (c *FileCollector) readJSONFile(state *fileState) {
 		if err != nil {
 			break
 		}
-		bytesRead += int64(len(line))
+
+		lineBytes := int64(len(line))
+		batchBytes += lineBytes
 		line = strings.TrimSuffix(line, "\n")
 		line = strings.TrimSuffix(line, "\r")
 		if line != "" {
 			lines = append(lines, []byte(line))
 		}
+
+		if batchBytes >= c.readBatchBytes {
+			c.flushReadBatch(state, lines, batchBytes, " 行")
+			lines = nil
+			batchBytes = 0
+		}
 	}
 
-	if len(lines) == 0 {
-		return
-	}
-
-	state.mu.Lock()
-	state.readOffset += bytesRead
-	state.mu.Unlock()
-
-	if c.output != nil {
-		c.output.Write(&output.Data{
-			ContainerID:   c.containerID,
-			ContainerName: c.containerName,
-			AppName:       c.appName,
-			FilePath:      state.path,
-			Lines:         lines,
-			CurSize:       bytesRead,
-		})
-	}
-
-	flog.Debugf("[%s:%s] %s 读取 %d 行, %.2f MB", c.containerName, c.name, state.path, len(lines), float64(bytesRead)/1024/1024)
+	c.flushReadBatch(state, lines, batchBytes, " 行")
 }
 
 // readMsgPackFile 按「4字节长度前缀 + payload」分帧读取 msgpack 二进制文件。
@@ -505,8 +529,8 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 	}
 
 	var lines [][]byte
-	var bytesRead int64
-	advanceOnly := false
+	// batchBytes 统计当前批次实际读取的文件字节数，用于限制单批内存并推进 readOffset。
+	var batchBytes int64
 
 	const maxPayloadSize = 64 * 1024 * 1024 // 单条 payload 上限 64 MB，防止格式错误导致内存暴涨
 
@@ -522,8 +546,12 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 		if payloadLen == 0 || payloadLen > maxPayloadSize {
 			flog.Warningf("[%s:%s] %s 检测到非法帧长度 %d，文件可能不是 messagePack 格式，跳过到文件末尾", c.containerName, c.name, state.path, payloadLen)
 			if info, statErr := file.Stat(); statErr == nil {
-				bytesRead = info.Size() - offset
-				advanceOnly = len(lines) == 0
+				state.mu.Lock()
+				currentOffset := state.readOffset
+				state.mu.Unlock()
+				if skipBytes := info.Size() - currentOffset - batchBytes; skipBytes > 0 {
+					batchBytes += skipBytes
+				}
 			}
 			break
 		}
@@ -534,35 +562,17 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 			break // payload 尚未写完，下次继续
 		}
 
-		bytesRead += int64(4 + payloadLen)
+		batchBytes += int64(4 + payloadLen)
 		lines = append(lines, payload)
-	}
 
-	if len(lines) == 0 {
-		if advanceOnly && bytesRead > 0 {
-			state.mu.Lock()
-			state.readOffset += bytesRead
-			state.mu.Unlock()
+		if batchBytes >= c.readBatchBytes {
+			c.flushReadBatch(state, lines, batchBytes, " 条msgpack记录")
+			lines = nil
+			batchBytes = 0
 		}
-		return
 	}
 
-	state.mu.Lock()
-	state.readOffset += bytesRead
-	state.mu.Unlock()
-
-	if c.output != nil {
-		c.output.Write(&output.Data{
-			ContainerID:   c.containerID,
-			ContainerName: c.containerName,
-			AppName:       c.appName,
-			FilePath:      state.path,
-			Lines:         lines,
-			CurSize:       bytesRead,
-		})
-	}
-
-	flog.Debugf("[%s:%s] %s 读取 %d 条msgpack记录, %.2f MB", c.containerName, c.name, state.path, len(lines), float64(bytesRead)/1024/1024)
+	c.flushReadBatch(state, lines, batchBytes, " 条msgpack记录")
 }
 
 // OnOutputSuccess 输出成功回调
