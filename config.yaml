@@ -34,7 +34,7 @@ Collectors:
     SerializeType: messagePack
     CompressThresholdKB: 128
 
-  # nginx主机日志采集示例
+  # nginx主机日志采集
   - Name: nginx-log
     Scope: Host
     AppName: nginx
@@ -46,7 +46,19 @@ Collectors:
     SerializeType: json
     CompressThresholdKB: 128
 
-  # traefik容器日志采集示例（Swarm 下优先匹配 service name）
+  # nginx主机error日志采集
+  - Name: nginx-errorlog
+    Scope: Host
+    AppName: nginx-error
+    WatchDir: /var/log/nginx-error/
+    FileExt: log
+    UploadURL: /flog/proxyLog
+    UploadInterval: 5
+    BufferSizeMB: 10
+    SerializeType: txt
+    CompressThresholdKB: 128
+
+  # traefik容器日志采集（Swarm 下优先匹配 service name）
   - Name: traefik-log
     Scope: Container
     AppName: traefik
