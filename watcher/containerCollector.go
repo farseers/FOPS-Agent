@@ -33,9 +33,12 @@ func NewContainerCollector(containerID, containerName string, pid int, cfg *conf
 	flog.Infof("[ContainerCollector] 创建: %s, PID: %d", containerName, pid)
 	// 遍历需要采集的目录,如:/var/log/flog/{app}/ /var/log/linkTrace/{app}/
 	for _, cc := range cfg.Collectors {
+		if !cc.RunsInContainer() {
+			continue
+		}
 		// 使用全局上传器
 		out := outputs[cc.Name]
-		col := collector.NewFileCollector(cc.Name, containerID, containerName, cc.WatchDir, cc.FileExt, pid, cc.SerializeType, cc.BufferSizeMB*1024*1024, out)
+		col := collector.NewFileCollector(cc.Name, containerID, containerName, cc.AppName, cc.WatchDir, cc.FileExt, pid, collector.WatchPathModeContainer, cc.SerializeType, cc.BufferSizeMB*1024*1024, out)
 		w.collectors = append(w.collectors, col)
 	}
 	return w, nil

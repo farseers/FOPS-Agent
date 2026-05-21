@@ -12,8 +12,9 @@ Container:
 
 # 采集器配置
 Collectors:
-  # 日志采集
+  # 应用日志采集
   - Name: log
+    Scope: Container
     WatchDir: /var/log/flog/{app}/
     FileExt: log
     UploadURL: /flog/upload
@@ -24,9 +25,33 @@ Collectors:
 
   # 链路追踪采集
   - Name: trace
+    Scope: Container
     WatchDir: /var/log/linkTrace/{app}/
     FileExt: trace
     UploadURL: /linkTrace/upload
+    UploadInterval: 5
+    BufferSizeMB: 10
+    SerializeType: messagePack
+    CompressThresholdKB: 128
+
+  # 主机日志采集示例（需要时取消注释）
+  - Name: nginx-log
+    Scope: Host
+    AppName: nginx
+    WatchDir: /var/log/nginx/
+    FileExt: log
+    UploadURL: /flog/proxyLog
+    UploadInterval: 5
+    BufferSizeMB: 10
+    SerializeType: messagePack
+    CompressThresholdKB: 128
+
+  - Name: traefik-log
+    Scope: Container
+    AppName: traefik
+    WatchDir: /var/log/traefik/
+    FileExt: log
+    UploadURL: /flog/proxyLog
     UploadInterval: 5
     BufferSizeMB: 10
     SerializeType: messagePack

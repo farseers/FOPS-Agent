@@ -20,20 +20,29 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+type WatchPathMode int
+
+const (
+	WatchPathModeContainer WatchPathMode = iota
+	WatchPathModeHost
+)
+
 // FileCollector 文件采集器
 type FileCollector struct {
-	name           string            // 配置名称
-	containerID    string            // 容器ID
-	containerName  string            // 容器名称
-	appName        string            // 应用名称
-	watchDir       string            // 配置文件定义的目录
-	actualPath     string            // 实际要监听的目录
-	fileExt        string            // 监听的文件扩展名
-	serializeType  string            // 序列化格式（json 或 messagePack）
-	readBatchBytes int64             // 单批读取大小上限
-	pid            int               // 容器在主机的进程ID
-	watcher        *fsnotify.Watcher // 文件监听客户端
-	output         output.Output     // 上传器
+	name              string            // 配置名称
+	containerID       string            // 容器ID
+	containerName     string            // 容器名称
+	appName           string            // 应用名称
+	configuredAppName string            // 配置指定的应用名称
+	watchDir          string            // 配置文件定义的目录
+	actualPath        string            // 实际要监听的目录
+	fileExt           string            // 监听的文件扩展名
+	serializeType     string            // 序列化格式（json 或 messagePack）
+	readBatchBytes    int64             // 单批读取大小上限
+	pid               int               // 容器在主机的进程ID
+	watchPathMode     WatchPathMode     // 监听路径模式
+	watcher           *fsnotify.Watcher // 文件监听客户端
+	output            output.Output     // 上传器
 
 	// 文件状态管理
 	filesMu sync.RWMutex
@@ -66,23 +75,25 @@ type fileInfo struct {
 }
 
 // NewFileCollector 创建文件采集器
-func NewFileCollector(name string, containerID string, containerName string, watchDir string, fileExt string, pid int, serializeType string, readBatchBytes int64, out output.Output) *FileCollector {
+func NewFileCollector(name string, containerID string, containerName string, appName string, watchDir string, fileExt string, pid int, watchPathMode WatchPathMode, serializeType string, readBatchBytes int64, out output.Output) *FileCollector {
 	if readBatchBytes <= 0 {
 		readBatchBytes = 10 * 1024 * 1024
 	}
 	fc := &FileCollector{
-		name:           name,
-		containerID:    containerID,
-		containerName:  containerName,
-		watchDir:       watchDir,
-		fileExt:        fileExt,
-		serializeType:  serializeType,
-		readBatchBytes: readBatchBytes,
-		pid:            pid,
-		output:         out,
-		files:          make(map[string]*fileState),
-		dirtyFiles:     make(map[string]struct{}),
-		dirtyCh:        make(chan struct{}, 1),
+		name:              name,
+		containerID:       containerID,
+		containerName:     containerName,
+		configuredAppName: strings.TrimSpace(appName),
+		watchDir:          watchDir,
+		fileExt:           fileExt,
+		serializeType:     serializeType,
+		readBatchBytes:    readBatchBytes,
+		pid:               pid,
+		watchPathMode:     watchPathMode,
+		output:            out,
+		files:             make(map[string]*fileState),
+		dirtyFiles:        make(map[string]struct{}),
+		dirtyCh:           make(chan struct{}, 1),
 	}
 	// 注册回调到全局上传器
 	if out != nil {
@@ -103,6 +114,9 @@ func (c *FileCollector) Start(ctx context.Context) {
 	if c.tryWatch() {
 		return
 	}
+	if c.configuredAppName == "" && !strings.Contains(c.watchDir, "{app}") {
+		return
+	}
 
 	// 先等30秒,等应用启动完毕
 	t := time.NewTicker(30 * time.Second)
@@ -110,7 +124,7 @@ func (c *FileCollector) Start(ctx context.Context) {
 
 	for {
 		select {
-		case <-ctx.Done():
+		case <-c.ctx.Done():
 			return
 		case <-t.C:
 			if c.tryWatch() {
@@ -122,18 +136,32 @@ func (c *FileCollector) Start(ctx context.Context) {
 
 // 尝试监听
 func (c *FileCollector) tryWatch() bool {
-	// 1. 获取应用名称
-	var actualPath string
-	actualPath, c.appName = c.detectAppName()
+	if c.configuredAppName != "" {
+		c.appName = c.configuredAppName
+		c.actualPath = c.resolveWatchDir(strings.ReplaceAll(c.watchDir, "{app}", c.appName))
+		return c.startWatching()
+	}
+
+	if !strings.Contains(c.watchDir, "{app}") {
+		flog.Warningf("[%s:%s] 未配置AppName且监听目录不包含{app}: %s", c.containerName, c.name, c.watchDir)
+		return false
+	}
+
+	_, c.appName = c.detectAppName()
 	if c.appName == "" {
 		return false
 	}
 
-	// 2. 构建实际监听路径：/proc/1000/root//var/log/linkTrace/应用名称/
-	c.actualPath = filepath.Join(actualPath, c.appName)
-
-	// 3. 尝试启动监控
+	c.actualPath = c.resolveWatchDir(strings.ReplaceAll(c.watchDir, "{app}", c.appName))
 	return c.startWatching()
+}
+
+// resolveWatchDir 解析实际监听目录
+func (c *FileCollector) resolveWatchDir(watchDir string) string {
+	if c.watchPathMode == WatchPathModeHost {
+		return filepath.Clean(watchDir)
+	}
+	return filepath.Join(config.ProcPrefix, fmt.Sprintf("%d", c.pid), "root", watchDir)
 }
 
 // startWatching 启动目录监控
@@ -188,17 +216,14 @@ func (c *FileCollector) Stop() {
 }
 
 // detectAppName 从目录检测应用名称
-func (w *FileCollector) detectAppName() (string, string) {
-	// w.watchDir = /var/log/linkTrace/{app}/
-	if !strings.Contains(w.watchDir, "{app}") {
+func (c *FileCollector) detectAppName() (string, string) {
+	if !strings.Contains(c.watchDir, "{app}") {
 		return "", ""
 	}
 
-	// parentDir = /var/log/linkTrace
-	parentDir := strings.TrimSuffix(filepath.Dir(strings.Replace(w.watchDir, "{app}/", "", -1)), "/")
-	// actualPath = /proc/1000/root/var/log/linkTrace
-	actualPath := filepath.Join(config.ProcPrefix, fmt.Sprintf("%d", w.pid), "root", parentDir)
-	// 读取目录
+	placeholderPath := filepath.Clean(strings.ReplaceAll(c.watchDir, "{app}", "__app__"))
+	parentDir := filepath.Dir(placeholderPath)
+	actualPath := c.resolveWatchDir(parentDir)
 	entries, err := os.ReadDir(actualPath)
 	if err != nil {
 		return actualPath, ""
@@ -209,7 +234,7 @@ func (w *FileCollector) detectAppName() (string, string) {
 		if entry.IsDir() {
 			dirName := entry.Name()
 			// 先使用名称匹配
-			if strings.EqualFold(dirName, w.containerName) {
+			if strings.EqualFold(dirName, c.containerName) {
 				return actualPath, dirName
 			}
 			if len(firstDir) == 0 {

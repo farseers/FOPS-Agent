@@ -112,7 +112,7 @@ func (u *HTTPUploader) Write(data *output.Data) {
 	// 缓冲区已满时阻塞采集侧，等待 flush 成功后唤醒
 	u.buffer.WaitUntilBelowMax()
 
-	u.buffer.Add(data.FilePath, data.Lines, data.CurSize)
+	u.buffer.Add(data.FilePath, data.AppName, data.Lines, data.CurSize)
 }
 
 // RegisterCallback 注册回调
@@ -242,6 +242,23 @@ func (u *HTTPUploader) buildMsgPack(fileInfos map[string]*fileInfo, lineCount in
 	})
 }
 
+func getBatchAppName(fileInfos map[string]*fileInfo) string {
+	var appName string
+	for _, info := range fileInfos {
+		if info.appName == "" {
+			continue
+		}
+		if appName == "" {
+			appName = info.appName
+			continue
+		}
+		if appName != info.appName {
+			return ""
+		}
+	}
+	return appName
+}
+
 // buildJSON 构建 JSON 请求体
 func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
 	// 对 key 排序，保证同批次内文件顺序稳定
@@ -252,7 +269,15 @@ func (u *HTTPUploader) buildJSON(fileInfos map[string]*fileInfo) []byte {
 	sort.Strings(keys)
 
 	var buf bytes.Buffer
-	buf.WriteString(`{"List":[`)
+	appName := getBatchAppName(fileInfos)
+	if appName != "" {
+		buf.WriteString(`{"AppName":`)
+		appNameBytes, _ := json.Marshal(appName)
+		buf.Write(appNameBytes)
+		buf.WriteString(`,"List":[`)
+	} else {
+		buf.WriteString(`{"List":[`)
+	}
 
 	first := true
 	for _, k := range keys {

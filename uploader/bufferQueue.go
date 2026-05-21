@@ -6,6 +6,7 @@ import (
 
 type fileInfo struct {
 	filePath string   // 文件地址
+	appName  string   // 应用名称
 	data     [][]byte // 文件数据(本次要上传的数据)
 	dataSize int64    // 数据大小(本次要上传的数据大小)
 }
@@ -46,7 +47,7 @@ func (q *bufferQueue) NotifyFlushed() {
 
 // Add 添加数据
 // 建议内部统一计算大小，防止与 GetAndClear 的切分逻辑不一致导致 curSize 误差
-func (q *bufferQueue) Add(filePath string, lines [][]byte, lineSize int64) int64 {
+func (q *bufferQueue) Add(filePath string, appName string, lines [][]byte, lineSize int64) int64 {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
@@ -54,6 +55,7 @@ func (q *bufferQueue) Add(filePath string, lines [][]byte, lineSize int64) int64
 	if !ok {
 		info = &fileInfo{
 			filePath: filePath,
+			appName:  appName,
 		}
 		q.fileInfos[filePath] = info
 	}
@@ -145,6 +147,7 @@ func (q *bufferQueue) GetAndClear(limitBytes int64) (map[string]*fileInfo, int64
 		// 执行切分
 		poppedInfo := &fileInfo{
 			filePath: filePath,
+			appName:  info.appName,
 			data:     info.data[:splitIndex],
 			dataSize: curBatchSize,
 		}

@@ -11,6 +11,15 @@ import (
 // ProcPrefix /proc 路径前缀（默认主机环境，检测到 /host/proc 则为 Docker 环境）
 var ProcPrefix = "/proc"
 
+const (
+	// CollectorScopeContainer 只采集容器内路径
+	CollectorScopeContainer = "Container"
+	// CollectorScopeHost 只采集主机路径
+	CollectorScopeHost = "Host"
+	// CollectorScopeBoth 同时采集容器内路径和主机路径
+	CollectorScopeBoth = "Both"
+)
+
 // Config 全局配置
 type Config struct {
 	// Fops 服务配置
@@ -34,6 +43,10 @@ type ContainerConfig struct {
 type CollectorConfig struct {
 	// Name 采集器名称
 	Name string `yaml:"Name"`
+	// Scope 采集范围：Container、Host、Both
+	Scope string `yaml:"Scope"`
+	// AppName 手动指定应用名称
+	AppName string `yaml:"AppName"`
 	// WatchDir 监听目录（支持 {app} 占位符）
 	WatchDir string `yaml:"WatchDir"`
 	// FileExt 文件扩展名
@@ -81,6 +94,9 @@ func Load() *Config {
 
 	// 设置采集器默认值
 	for i := range cfg.Collectors {
+		if cfg.Collectors[i].Scope == "" {
+			cfg.Collectors[i].Scope = CollectorScopeContainer
+		}
 		if cfg.Collectors[i].UploadInterval == 0 {
 			cfg.Collectors[i].UploadInterval = 5
 		}
@@ -118,4 +134,14 @@ func (c *Config) GetCollectorConfig(name string) *CollectorConfig {
 		}
 	}
 	return nil
+}
+
+// RunsInContainer 判断采集器是否采集容器内路径
+func (c CollectorConfig) RunsInContainer() bool {
+	return strings.EqualFold(c.Scope, CollectorScopeContainer) || strings.EqualFold(c.Scope, CollectorScopeBoth)
+}
+
+// RunsOnHost 判断采集器是否采集主机路径
+func (c CollectorConfig) RunsOnHost() bool {
+	return strings.EqualFold(c.Scope, CollectorScopeHost) || strings.EqualFold(c.Scope, CollectorScopeBoth)
 }

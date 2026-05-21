@@ -1,9 +1,11 @@
 package watcher
 
 import (
+	"context"
 	"sync"
 	"sync/atomic"
 
+	"fops-agent/collector"
 	"fops-agent/config"
 	"fops-agent/container"
 	"fops-agent/output"
@@ -16,10 +18,11 @@ import (
 // CollectorManager 文件监视器管理器
 // 订阅容器事件，管理每个容器的文件监视器
 type CollectorManager struct {
-	cfg          *config.Config           // 配置文件
-	outputs      map[string]output.Output // collectorName -> Output（全局共享）
-	watchers     sync.Map                 // containerID -> *ContainerCollector
-	watcherCount atomic.Int64             // 监视器数量
+	cfg            *config.Config           // 配置文件
+	outputs        map[string]output.Output // collectorName -> Output（全局共享）
+	hostCollectors []collector.Collector    // 主机路径采集器
+	watchers       sync.Map                 // containerID -> *ContainerCollector
+	watcherCount   atomic.Int64             // 监视器数量
 }
 
 // NewCollectorManager 创建文件监视器管理器
@@ -31,12 +34,30 @@ func NewCollectorManager(cfg *config.Config) *CollectorManager {
 
 	// 预创建全局上传器（每个 collector 一个）
 	for _, cc := range cfg.Collectors {
+		if _, ok := m.outputs[cc.Name]; ok {
+			continue
+		}
 		m.outputs[cc.Name] = uploader.NewHTTPUploader(cc.Name, cc.UploadURL, cfg.FopsHttpServer, cc.UploadInterval, cc.BufferSizeMB, cc.SerializeType, cc.CompressThresholdKB)
 		// 启动所有上传器
 		m.outputs[cc.Name].Start()
 	}
 
 	return m
+}
+
+// StartHostCollectors 启动主机路径采集器
+func (m *CollectorManager) StartHostCollectors(ctx context.Context) {
+	for _, cc := range m.cfg.Collectors {
+		if !cc.RunsOnHost() {
+			continue
+		}
+
+		out := m.outputs[cc.Name]
+		col := collector.NewFileCollector(cc.Name, "host", "宿主机", cc.AppName, cc.WatchDir, cc.FileExt, 0, collector.WatchPathModeHost, cc.SerializeType, cc.BufferSizeMB*1024*1024, out)
+		m.hostCollectors = append(m.hostCollectors, col)
+		go col.Start(ctx)
+		flog.Infof("[HostCollector] 启动: %s, 监听目录: %s", cc.Name, cc.WatchDir)
+	}
 }
 
 // OnContainerAdd 容器新增事件（实现 container.Observer 接口）
@@ -78,6 +99,11 @@ func (m *CollectorManager) OnContainerRemove(containerID string) {
 
 // Stop 停止所有监视器
 func (m *CollectorManager) Stop() {
+	for _, col := range m.hostCollectors {
+		col.Stop()
+	}
+	m.hostCollectors = nil
+
 	m.watchers.Range(func(key, value interface{}) bool {
 		value.(*ContainerCollector).Stop()
 		return true
