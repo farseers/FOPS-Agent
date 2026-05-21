@@ -38,6 +38,10 @@ type FileCollector struct {
 	filesMu sync.RWMutex
 	files   map[string]*fileState // filePath -> state
 
+	dirtyMu    sync.Mutex          // 保护 dirtyFiles 的并发读写
+	dirtyFiles map[string]struct{} // 待合并读取的文件集合
+	dirtyCh    chan struct{}       // dirty 通知通道，容量为1用于合并高频事件
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -72,6 +76,8 @@ func NewFileCollector(name string, containerID string, containerName string, wat
 		pid:           pid,
 		output:        out,
 		files:         make(map[string]*fileState),
+		dirtyFiles:    make(map[string]struct{}),
+		dirtyCh:       make(chan struct{}, 1),
 	}
 	// 注册回调到全局上传器
 	if out != nil {
@@ -154,8 +160,13 @@ func (c *FileCollector) startWatching() bool {
 	c.scanExistingFiles()
 
 	// 启动事件处理协程
-	c.wg.Add(1)
+	c.wg.Add(2)
+
+	// 处理 fsnotify 事件
 	go c.handleEvents()
+
+	// 合并处理文件变更，并定时兜底扫描防止 fsnotify 事件丢失
+	go c.dirtyWorker()
 
 	return true
 }
@@ -261,6 +272,109 @@ func (c *FileCollector) handleEvents() {
 	}
 }
 
+// dirtyWorker 合并处理文件变更，并定时兜底扫描防止 fsnotify 事件丢失
+func (c *FileCollector) dirtyWorker() {
+	defer c.wg.Done()
+
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		case <-c.dirtyCh:
+			c.readDirtyFiles()
+		case <-ticker.C:
+			c.scanChangedFiles()
+			c.readDirtyFiles()
+		}
+	}
+}
+
+// markDirty 标记文件需要读取，重复标记会自动合并
+func (c *FileCollector) markDirty(filePath string) {
+	c.dirtyMu.Lock()
+	c.dirtyFiles[filePath] = struct{}{}
+	c.dirtyMu.Unlock()
+
+	select {
+	case c.dirtyCh <- struct{}{}:
+	default:
+	}
+}
+
+// readDirtyFiles 读取当前已标记 dirty 的文件
+func (c *FileCollector) readDirtyFiles() {
+	filePaths := c.takeDirtyFiles()
+	for _, filePath := range filePaths {
+		info, err := os.Stat(filePath)
+		if err != nil {
+			continue
+		}
+		fi := fileInfo{path: filePath, size: info.Size(), modTime: info.ModTime()}
+		if !c.refreshFileState(fi) {
+			continue
+		}
+
+		c.filesMu.RLock()
+		state, ok := c.files[filePath]
+		c.filesMu.RUnlock()
+		if !ok {
+			continue
+		}
+		c.readFile(state)
+	}
+}
+
+// takeDirtyFiles 取出并清空本轮待读取文件
+func (c *FileCollector) takeDirtyFiles() []string {
+	c.dirtyMu.Lock()
+	defer c.dirtyMu.Unlock()
+
+	filePaths := make([]string, 0, len(c.dirtyFiles))
+	for filePath := range c.dirtyFiles {
+		filePaths = append(filePaths, filePath)
+	}
+	c.dirtyFiles = make(map[string]struct{})
+	sort.Strings(filePaths)
+	return filePaths
+}
+
+// scanChangedFiles 扫描目录中有新增内容的文件，作为事件丢失时的兜底
+func (c *FileCollector) scanChangedFiles() {
+	fileInfos := c.getSortFileList()
+	for _, fi := range fileInfos {
+		if c.refreshFileState(fi) {
+			c.markDirty(fi.path)
+		}
+	}
+}
+
+// refreshFileState 刷新文件大小和修改时间，返回是否存在未读内容
+func (c *FileCollector) refreshFileState(fi fileInfo) bool {
+	c.filesMu.Lock()
+	state, ok := c.files[fi.path]
+	if !ok {
+		state = &fileState{path: fi.path}
+		c.files[fi.path] = state
+		flog.Warningf("[%s:%s] 文件不在跟踪列表,重新加入: %s", c.containerName, c.name, fi.path)
+	}
+	c.filesMu.Unlock()
+
+	state.mu.Lock()
+	defer state.mu.Unlock()
+
+	if fi.size < state.size || fi.size < state.readOffset {
+		flog.Infof("[%s:%s] 文件rotate: %s, 跟踪大小: %d, 实际大小: %d", c.containerName, c.name, fi.path, state.size, fi.size)
+		state.readOffset = 0
+	}
+
+	state.size = fi.size
+	state.modTime = fi.modTime
+	return fi.size > state.readOffset
+}
+
 // processEvent 处理单个事件
 func (c *FileCollector) processEvent(event fsnotify.Event) {
 	// 只处理目标扩展名的文件
@@ -280,21 +394,7 @@ func (c *FileCollector) processEvent(event fsnotify.Event) {
 // handleFileCreate 处理文件创建事件
 func (c *FileCollector) handleFileCreate(filePath string) {
 	flog.Infof("[%s:%s] 新文件: %s", c.containerName, c.name, filePath)
-
-	// 添加新文件状态
-	info, err := os.Stat(filePath)
-	if err != nil {
-		flog.Warningf("[%s:%s] 获取文件信息失败: %v", c.containerName, c.name, err)
-		return
-	}
-
-	c.filesMu.Lock()
-	c.files[filePath] = &fileState{
-		path:    filePath,
-		size:    info.Size(),
-		modTime: info.ModTime(),
-	}
-	c.filesMu.Unlock()
+	c.markDirty(filePath)
 
 	// 检查是否有待删除的文件可以删除
 	c.tryDeletePendingFiles()
@@ -302,36 +402,7 @@ func (c *FileCollector) handleFileCreate(filePath string) {
 
 // handleFileWrite 处理文件写入事件
 func (c *FileCollector) handleFileWrite(filePath string) {
-	// 先获取文件信息，避免在持锁期间做 IO
-	info, err := os.Stat(filePath)
-	if err != nil {
-		return
-	}
-
-	c.filesMu.Lock()
-	state, ok := c.files[filePath]
-	if !ok {
-		// 文件不在跟踪列表，新建 state，避免后续 nil 指针 panic
-		state = &fileState{path: filePath}
-		c.files[filePath] = state
-		flog.Warningf("[%s:%s] 文件不在跟踪列表,重新加入: %s", c.containerName, c.name, filePath)
-	}
-
-	// 检查文件是否被 rotate（变小了）
-	state.mu.Lock()
-	if info.Size() < state.size {
-		flog.Infof("[%s:%s] 文件rotate: %s, 跟踪大小: %d, 实际大小: %d", c.containerName, c.name, filePath, state.size, info.Size())
-		state.readOffset = 0
-	}
-
-	// 重新读取文件大小和时间
-	state.size = info.Size()
-	state.modTime = info.ModTime()
-	state.mu.Unlock()
-	c.filesMu.Unlock()
-
-	// 读取新增内容
-	c.readFile(state)
+	c.markDirty(filePath)
 }
 
 // readFile 读取文件内容（按序列化格式分发）
@@ -429,11 +500,13 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 			state.mu.Lock()
 			state.readOffset = 0
 			state.mu.Unlock()
+			offset = 0
 		}
 	}
 
 	var lines [][]byte
 	var bytesRead int64
+	advanceOnly := false
 
 	const maxPayloadSize = 64 * 1024 * 1024 // 单条 payload 上限 64 MB，防止格式错误导致内存暴涨
 
@@ -450,6 +523,7 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 			flog.Warningf("[%s:%s] %s 检测到非法帧长度 %d，文件可能不是 messagePack 格式，跳过到文件末尾", c.containerName, c.name, state.path, payloadLen)
 			if info, statErr := file.Stat(); statErr == nil {
 				bytesRead = info.Size() - offset
+				advanceOnly = len(lines) == 0
 			}
 			break
 		}
@@ -465,6 +539,11 @@ func (c *FileCollector) readMsgPackFile(state *fileState) {
 	}
 
 	if len(lines) == 0 {
+		if advanceOnly && bytesRead > 0 {
+			state.mu.Lock()
+			state.readOffset += bytesRead
+			state.mu.Unlock()
+		}
 		return
 	}
 
@@ -514,7 +593,7 @@ func (c *FileCollector) tryDeletePendingFiles() {
 		if fileState, ok := c.files[fileInfos[i].path]; ok {
 			// 读取了文件,且上传和读取的偏移量相同,则表示可以删除
 			fileState.mu.Lock()
-			canDelete := fileState.readOffset > 0 && fileState.readOffset == fileState.uploadOffset
+			canDelete := fileState.readOffset > 0 && fileState.readOffset == fileState.uploadOffset && fileInfos[i].size <= fileState.readOffset
 			fileState.mu.Unlock()
 
 			if canDelete {
