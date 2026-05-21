@@ -5,6 +5,7 @@ import (
 
 	"fops-agent/collector"
 	"fops-agent/config"
+	"fops-agent/container"
 	"fops-agent/output"
 
 	"github.com/farseer-go/fs/flog"
@@ -21,7 +22,7 @@ type ContainerCollector struct {
 }
 
 // NewContainerCollector 创建容器文件监视器
-func NewContainerCollector(containerID, containerName string, pid int, cfg *config.Config, outputs map[string]output.Output) (*ContainerCollector, error) {
+func NewContainerCollector(containerID, containerName string, pid int, matchNames []string, cfg *config.Config, outputs map[string]output.Output) (*ContainerCollector, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	w := &ContainerCollector{
 		containerID:   containerID,
@@ -30,10 +31,9 @@ func NewContainerCollector(containerID, containerName string, pid int, cfg *conf
 		ctx:           ctx,
 		cancel:        cancel,
 	}
-	flog.Infof("[ContainerCollector] 创建: %s, PID: %d", containerName, pid)
 	// 遍历需要采集的目录,如:/var/log/flog/{app}/ /var/log/linkTrace/{app}/
 	for _, cc := range cfg.Collectors {
-		if !cc.RunsInContainer() {
+		if !cc.RunsInContainer() || !container.MatchContainerNames(matchNames, cc.ContainerNames) {
 			continue
 		}
 		// 使用全局上传器
@@ -41,7 +41,15 @@ func NewContainerCollector(containerID, containerName string, pid int, cfg *conf
 		col := collector.NewFileCollector(cc.Name, containerID, containerName, cc.AppName, cc.WatchDir, cc.FileExt, pid, collector.WatchPathModeContainer, cc.SerializeType, cc.BufferSizeMB*1024*1024, out)
 		w.collectors = append(w.collectors, col)
 	}
+	if len(w.collectors) > 0 {
+		flog.Infof("[ContainerCollector] 创建: %s, PID: %d, 采集器: %d", containerName, pid, len(w.collectors))
+	}
 	return w, nil
+}
+
+// HasCollectors 判断容器是否有需要启动的采集器
+func (w *ContainerCollector) HasCollectors() bool {
+	return len(w.collectors) > 0
 }
 
 // Start 启动容器监视器

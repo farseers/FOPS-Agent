@@ -33,7 +33,7 @@ Collectors:
     SerializeType: messagePack
     CompressThresholdKB: 128
 
-  # 主机日志采集示例（需要时取消注释）
+  # nginx主机日志采集示例
   - Name: nginx-log
     Scope: Host
     AppName: nginx
@@ -42,16 +42,19 @@ Collectors:
     UploadURL: /flog/proxyLog
     UploadInterval: 5
     BufferSizeMB: 10
-    SerializeType: messagePack
+    SerializeType: txt
     CompressThresholdKB: 128
 
+  # traefik容器日志采集示例（Swarm 下优先匹配 service name）
   - Name: traefik-log
     Scope: Container
     AppName: traefik
+    ContainerNames:
+      - "traefik"
     WatchDir: /var/log/traefik/
     FileExt: log
     UploadURL: /flog/proxyLog
     UploadInterval: 5
     BufferSizeMB: 10
-    SerializeType: messagePack
+    SerializeType: json
     CompressThresholdKB: 128

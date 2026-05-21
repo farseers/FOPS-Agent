@@ -235,6 +235,56 @@ func ParseContainerName(name string) string {
 	return name
 }
 
+// GetContainerMatchNames 获取用于匹配采集器范围的容器名称候选
+func GetContainerMatchNames(c *docker.ContainerIdInspectJson) []string {
+	if c == nil {
+		return nil
+	}
+
+	var names []string
+	add := func(name string) {
+		name = strings.TrimSpace(strings.TrimPrefix(name, "/"))
+		if name == "" {
+			return
+		}
+		for _, existing := range names {
+			if existing == name {
+				return
+			}
+		}
+		names = append(names, name)
+	}
+
+	add(c.Config.Labels.ComDockerSwarmServiceName)
+	add(c.Config.Labels.ComDockerSwarmTaskName)
+	add(c.Name)
+	add(ParseContainerName(c.Name))
+	return names
+}
+
+// MatchContainerNames 判断容器名称候选是否匹配配置的容器范围
+func MatchContainerNames(matchNames []string, allowNames []string) bool {
+	hasFilter := false
+	for _, allowName := range allowNames {
+		allowName = strings.TrimSpace(strings.TrimPrefix(allowName, "/"))
+		if allowName == "" {
+			continue
+		}
+		hasFilter = true
+		for _, matchName := range matchNames {
+			matchName = strings.TrimSpace(strings.TrimPrefix(matchName, "/"))
+			if isContainerNameMatch(matchName, allowName) {
+				return true
+			}
+		}
+	}
+	return !hasFilter
+}
+
+func isContainerNameMatch(matchName, allowName string) bool {
+	return matchName == allowName || strings.HasPrefix(matchName, allowName+".")
+}
+
 // notifyAdd 存储容器并通知观察者
 func (m *Manager) notifyAdd(container docker.ContainerIdInspectJson) {
 	m.containers.Store(container.ID, &container)

@@ -114,7 +114,7 @@ func (c *FileCollector) Start(ctx context.Context) {
 	if c.tryWatch() {
 		return
 	}
-	if c.configuredAppName == "" && !strings.Contains(c.watchDir, "{app}") {
+	if !c.shouldRetryWatch() {
 		return
 	}
 
@@ -134,6 +134,10 @@ func (c *FileCollector) Start(ctx context.Context) {
 	}
 }
 
+func (c *FileCollector) shouldRetryWatch() bool {
+	return c.watchPathMode == WatchPathModeHost || c.configuredAppName != "" || strings.Contains(c.watchDir, "{app}")
+}
+
 // 尝试监听
 func (c *FileCollector) tryWatch() bool {
 	if c.configuredAppName != "" {
@@ -143,6 +147,10 @@ func (c *FileCollector) tryWatch() bool {
 	}
 
 	if !strings.Contains(c.watchDir, "{app}") {
+		if c.watchPathMode == WatchPathModeHost {
+			c.actualPath = c.resolveWatchDir(c.watchDir)
+			return c.startWatching()
+		}
 		flog.Warningf("[%s:%s] 未配置AppName且监听目录不包含{app}: %s", c.containerName, c.name, c.watchDir)
 		return false
 	}
@@ -167,8 +175,14 @@ func (c *FileCollector) resolveWatchDir(watchDir string) string {
 // startWatching 启动目录监控
 func (c *FileCollector) startWatching() bool {
 	// 检查目录是否存在
-	if _, err := os.Stat(c.actualPath); os.IsNotExist(err) {
-		flog.Warningf("[%s:%s] 监听目录不存在: %s, 稍候再试", c.containerName, c.name, c.actualPath)
+	if _, err := os.Stat(c.actualPath); err != nil {
+		if os.IsNotExist(err) {
+			if c.watchPathMode != WatchPathModeHost {
+				flog.Warningf("[%s:%s] 监听目录不存在: %s, 稍候再试", c.containerName, c.name, c.actualPath)
+			}
+			return false
+		}
+		flog.Warningf("[%s:%s] 检查监听目录失败: %v, 稍候再试", c.containerName, c.name, err)
 		return false
 	}
 

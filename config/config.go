@@ -47,6 +47,8 @@ type CollectorConfig struct {
 	Scope string `yaml:"Scope"`
 	// AppName 手动指定应用名称
 	AppName string `yaml:"AppName"`
+	// ContainerNames 限定容器名称或 Swarm 服务名称，空表示所有容器
+	ContainerNames []string `yaml:"ContainerNames"`
 	// WatchDir 监听目录（支持 {app} 占位符）
 	WatchDir string `yaml:"WatchDir"`
 	// FileExt 文件扩展名

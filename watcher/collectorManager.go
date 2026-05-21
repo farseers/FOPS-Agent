@@ -74,9 +74,13 @@ func (m *CollectorManager) OnContainerAdd(c *docker.ContainerIdInspectJson) {
 	if _, ok := m.watchers.Load(c.ID); ok {
 		return
 	}
-	w, err := NewContainerCollector(c.ID, containerName, c.State.Pid, m.cfg, m.outputs)
+	matchNames := container.GetContainerMatchNames(c)
+	w, err := NewContainerCollector(c.ID, containerName, c.State.Pid, matchNames, m.cfg, m.outputs)
 	if err != nil {
 		flog.Errorf("[FileWatcher] 创建监视器失败: %v", err)
+		return
+	}
+	if !w.HasCollectors() {
 		return
 	}
 
