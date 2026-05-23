@@ -52,6 +52,9 @@ type FileCollector struct {
 	dirtyFiles map[string]struct{} // 待合并读取的文件集合
 	dirtyCh    chan struct{}       // dirty 通知通道，容量为1用于合并高频事件
 
+	deleteMu      sync.Mutex
+	deletePending bool
+
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -331,9 +334,10 @@ func (c *FileCollector) dirtyWorker() {
 			c.readDirtyFiles()
 		case <-ticker.C:
 			// 扫描目录中有新增内容的文件，作为事件丢失时的兜底
-			c.scanChangedFiles()
+			fileInfos := c.scanChangedFiles()
 			// 读取当前已标记 dirty 的文件
 			c.readDirtyFiles()
+			c.tryDeletePendingFiles(fileInfos)
 		}
 	}
 }
@@ -388,13 +392,14 @@ func (c *FileCollector) takeDirtyFiles() []string {
 }
 
 // scanChangedFiles 扫描目录中有新增内容的文件，作为事件丢失时的兜底
-func (c *FileCollector) scanChangedFiles() {
+func (c *FileCollector) scanChangedFiles() []fileInfo {
 	fileInfos := c.getSortFileList()
 	for _, fi := range fileInfos {
 		if c.refreshFileState(fi) {
 			c.markDirty(fi.path)
 		}
 	}
+	return fileInfos
 }
 
 // refreshFileState 刷新文件大小和修改时间，返回是否存在未读内容
@@ -441,9 +446,7 @@ func (c *FileCollector) processEvent(event fsnotify.Event) {
 func (c *FileCollector) handleFileCreate(filePath string) {
 	flog.Infof("[%s:%s] 新文件: %s", c.containerName, c.name, filePath)
 	c.markDirty(filePath)
-
-	// 检查是否有待删除的文件可以删除
-	c.tryDeletePendingFiles()
+	c.markDeletePending()
 }
 
 // handleFileWrite 处理文件写入事件
@@ -626,10 +629,24 @@ func (c *FileCollector) OnOutputSuccess(filePath string, uploadSize int64) {
 	}
 }
 
+func (c *FileCollector) markDeletePending() {
+	c.deleteMu.Lock()
+	c.deletePending = true
+	c.deleteMu.Unlock()
+}
+
+func (c *FileCollector) takeDeletePending() bool {
+	c.deleteMu.Lock()
+	defer c.deleteMu.Unlock()
+
+	pending := c.deletePending
+	c.deletePending = false
+	return pending
+}
+
 // tryDeletePendingFiles 尝试删除待删除的文件
-func (c *FileCollector) tryDeletePendingFiles() {
-	fileInfos := c.getSortFileList()
-	if len(fileInfos) == 1 {
+func (c *FileCollector) tryDeletePendingFiles(fileInfos []fileInfo) {
+	if !c.takeDeletePending() || len(fileInfos) <= 1 {
 		return
 	}
 
@@ -637,13 +654,20 @@ func (c *FileCollector) tryDeletePendingFiles() {
 	c.filesMu.Lock()
 	defer c.filesMu.Unlock()
 
+	hasPendingUpload := false
+
 	// 永远不删除第1个最新修改时间的文件
 	for i := 1; i < len(fileInfos); i++ {
 		if fileState, ok := c.files[fileInfos[i].path]; ok {
 			// 读取了文件,且上传和读取的偏移量相同,则表示可以删除
 			fileState.mu.Lock()
 			canDelete := fileState.readOffset > 0 && fileState.readOffset == fileState.uploadOffset && fileInfos[i].size <= fileState.readOffset
+			waitingUpload := fileState.readOffset > 0 && fileInfos[i].size <= fileState.readOffset && fileState.readOffset != fileState.uploadOffset
 			fileState.mu.Unlock()
+
+			if waitingUpload {
+				hasPendingUpload = true
+			}
 
 			if canDelete {
 				// 删除文件
@@ -665,6 +689,10 @@ func (c *FileCollector) tryDeletePendingFiles() {
 				flog.Warningf("[%s:%s] 删除文件失败: %v", c.containerName, c.name, err)
 			}
 		}
+	}
+
+	if hasPendingUpload {
+		c.markDeletePending()
 	}
 }
 
