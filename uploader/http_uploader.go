@@ -33,9 +33,6 @@ type HTTPUploader struct {
 	callbacks              []output.SuccessCallback // collectorName -> callback 上传成功后的回调
 	cbMu                   sync.RWMutex
 
-	lastFailTime time.Time // 上次上传失败时间
-	failMu       sync.RWMutex
-
 	flushing bool       // 是否正在刷新
 	flushMu  sync.Mutex // 保护 flushing 标志
 
@@ -194,10 +191,6 @@ func (u *HTTPUploader) flush() {
 		// 将数据放回缓冲区，避免数据丢失
 		u.buffer.PutBack(fileInfos)
 
-		// 记录失败时间，触发5秒冷却期
-		u.failMu.Lock()
-		u.lastFailTime = time.Now()
-		u.failMu.Unlock()
 		return
 	}
 
