@@ -191,6 +191,9 @@ func (u *HTTPUploader) flush() {
 		// 将数据放回缓冲区，避免数据丢失
 		u.buffer.PutBack(fileInfos)
 
+		// 唤醒被背压阻塞的采集侧，让其重新判断缓冲区水位，避免上传持续失败时采集协程永久卡死
+		u.buffer.NotifyFlushed()
+
 		return
 	}
 
