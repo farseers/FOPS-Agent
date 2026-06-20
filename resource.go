@@ -56,13 +56,11 @@ func getResource(wsServer string, dockerInfo docker.DockerInfo, containerMgr *co
 				res.Role = "Manager"
 			}
 
-			// 可用性首字母大写
-			if len(res.Availability) > 0 {
-				res.Availability = strings.ToUpper(string(res.Availability[0])) + res.Availability[1:]
-			}
-
-			if res.DockerEngineVersion == "未安装" {
+			if res.DockerEngineVersion == "未安装" || dockerInfo.Swarm.LocalNodeState == "inactive" {
 				res.Availability = "Active"
+			} else if len(res.Availability) > 0 {
+				// 可用性首字母大写
+				res.Availability = strings.ToUpper(string(res.Availability[0])) + res.Availability[1:]
 			}
 
 			// 标签
